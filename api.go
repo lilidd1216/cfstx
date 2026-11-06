@@ -126,6 +126,16 @@ func (a *API) handleAPI(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{"hasUpdate": false})
 			return
 		}
+		// 统一前端使用的字段名，避免直接暴露 Gitee 的 browser_download_url
+		type assetDTO struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+			Size int64  `json:"size"`
+		}
+		assets := make([]assetDTO, 0, len(info.Assets))
+		for _, as := range info.Assets {
+			assets = append(assets, assetDTO{Name: as.Name, URL: as.URL, Size: as.Size})
+		}
 		writeJSON(w, map[string]any{
 			"hasUpdate": version.IsNewer(version.Current, info.TagName),
 			"current":   version.Current,
@@ -133,7 +143,7 @@ func (a *API) handleAPI(w http.ResponseWriter, r *http.Request) {
 			"name":      info.Name,
 			"body":      info.Body,
 			"url":       info.HTMLURL,
-			"assets":    info.Assets,
+			"assets":    assets,
 		})
 
 	case path == "/api/update/download" && r.Method == http.MethodPost:
