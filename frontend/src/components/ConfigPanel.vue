@@ -296,6 +296,18 @@ const disabled = computed(() => props.running)
         </v-col>
 
         <v-col cols="12" sm="6" md="4">
+          <v-text-field
+            v-model.number="config.printNum"
+            label="显示结果数量"
+            type="number"
+            min="0"
+            :disabled="disabled"
+            density="compact"
+          />
+          <div class="hint">表格最多显示多少条结果，0 表示不显示（导出仍为全部结果）。</div>
+        </v-col>
+
+        <v-col cols="12" sm="6" md="4">
           <div class="toggle-row compact">
             <div class="toggle-text">
               <div class="toggle-label">调试模式</div>

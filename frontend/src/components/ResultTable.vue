@@ -3,6 +3,7 @@ import { computed } from 'vue'
 
 const props = defineProps({
   results: { type: Array, default: () => [] },
+  total: { type: Number, default: 0 },
   loading: { type: Boolean, default: false },
 })
 const emit = defineEmits(['export'])
@@ -39,7 +40,10 @@ function delayColor(delay) {
     <v-card-title class="d-flex align-center py-3">
       <v-icon class="mr-2" size="20">mdi-table-large</v-icon>
       <span class="text-subtitle-1 font-weight-medium">测速结果</span>
-      <v-chip size="small" variant="tonal" class="ml-3">{{ results.length }} 个 IP</v-chip>
+      <v-chip size="small" variant="tonal" class="ml-3">
+        <span v-if="total > results.length">显示 {{ results.length }} / 共 {{ total }} 个 IP</span>
+        <span v-else>{{ results.length }} 个 IP</span>
+      </v-chip>
       <v-spacer />
       <v-btn
         variant="tonal"

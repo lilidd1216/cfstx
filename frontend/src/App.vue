@@ -91,6 +91,14 @@ const progressPercent = computed(() => {
   return Math.min(100, (progress.value.current / progress.value.total) * 100)
 })
 
+// 按「显示结果数量」截断表格；0 表示不显示，空值表示全部
+const displayResults = computed(() => {
+  const n = Number(config.value.printNum)
+  if (n === 0) return []
+  if (!n || n >= results.value.length) return results.value
+  return results.value.slice(0, n)
+})
+
 const phaseLabel = computed(() => {
   switch (phase.value) {
     case 'ping': return '延迟测速中'
@@ -482,7 +490,12 @@ onBeforeUnmount(() => {
         />
 
         <!-- 结果 -->
-        <ResultTable :results="results" :loading="running" @export="exportCsv" />
+        <ResultTable
+          :results="displayResults"
+          :total="results.length"
+          :loading="running"
+          @export="exportCsv"
+        />
       </div>
     </v-main>
 
