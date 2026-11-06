@@ -623,11 +623,20 @@ onBeforeUnmount(() => {
           <v-progress-linear :model-value="downloadProgress" color="primary" height="8" rounded />
         </div>
 
-        <v-card-actions v-else-if="updateState === 'downloaded'" class="pa-3">
-          <v-spacer />
-          <v-btn variant="text" @click="updateDialog = false">稍后</v-btn>
-          <v-btn color="primary" prepend-icon="mdi-cog-play" @click="installUpdate">立即安装</v-btn>
-        </v-card-actions>
+        <div v-else-if="updateState === 'downloaded'" class="px-6 pb-4">
+          <v-alert
+            type="info"
+            variant="tonal"
+            density="compact"
+            class="mb-3 text-caption"
+          >
+            首次更新时 Windows 可能提示「无法验证发布者」，请点击「更多信息」→「仍要运行」继续
+          </v-alert>
+          <div class="d-flex justify-end ga-2">
+            <v-btn variant="text" @click="updateDialog = false">稍后</v-btn>
+            <v-btn color="primary" prepend-icon="mdi-cog-play" @click="installUpdate">立即安装</v-btn>
+          </div>
+        </div>
 
         <div v-else-if="updateState === 'installing'" class="px-6 pb-5">
           <div class="d-flex align-center ga-2 text-caption">
