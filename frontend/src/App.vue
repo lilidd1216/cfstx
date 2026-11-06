@@ -5,6 +5,7 @@ import DOMPurify from 'dompurify'
 import ConfigPanel from './components/ConfigPanel.vue'
 import ResultTable from './components/ResultTable.vue'
 import HistoryDialog from './components/HistoryDialog.vue'
+import OptimizePanel from './components/OptimizePanel.vue'
 
 const config = ref({
   threads: 200,
@@ -62,12 +63,17 @@ let es = null
 // 导航菜单：后续新增页面只需在此追加
 const navItems = [
   { key: 'prefer-ip', title: '优选IP', icon: 'mdi-map-marker-radius-outline' },
+  { key: 'optimize', title: '优化工具', icon: 'mdi-tools' },
 ]
 
 const pageMeta = {
   'prefer-ip': {
     title: '优选IP',
     desc: '测速 Cloudflare CDN 各 IP 的延迟与下载速度，筛出当前网络下最快的节点',
+  },
+  optimize: {
+    title: '优化工具',
+    desc: '把优选结果应用到直连访问与客户端订阅，减少连接超时',
   },
 }
 
@@ -624,6 +630,7 @@ onBeforeUnmount(() => {
             <p class="page-desc">{{ currentMeta.desc }}</p>
           </div>
           <v-btn
+            v-if="currentPage === 'prefer-ip'"
             variant="text"
             size="small"
             prepend-icon="mdi-restore"
@@ -634,6 +641,7 @@ onBeforeUnmount(() => {
           </v-btn>
         </div>
 
+        <template v-if="currentPage === 'prefer-ip'">
         <!-- 测速操作栏（吸顶） -->
         <v-card class="action-bar" elevation="0">
           <div class="action-inner">
@@ -750,6 +758,13 @@ onBeforeUnmount(() => {
           @export="exportCsv"
           @export-txt="exportTxt"
           @copied="handleCopied"
+        />
+        </template>
+
+        <OptimizePanel
+          v-else-if="currentPage === 'optimize'"
+          :results="results"
+          @toast="(text, color) => toast(text, color)"
         />
       </div>
     </v-main>

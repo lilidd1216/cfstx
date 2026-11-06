@@ -66,6 +66,32 @@ func (a *API) handleAPI(w http.ResponseWriter, r *http.Request) {
 		// 测速前检测系统代理，前端据此提示用户关闭代理
 		writeJSON(w, a.app.CheckProxy())
 
+	case path == "/api/hosts" && r.Method == http.MethodGet:
+		writeJSON(w, a.app.GetHostsStatus())
+
+	case path == "/api/hosts/apply" && r.Method == http.MethodPost:
+		var body struct {
+			Domain string `json:"domain"`
+			IP     string `json:"ip"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		backup, err := a.app.ApplyHosts(body.Domain, body.IP)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, map[string]string{"backup": backup})
+
+	case path == "/api/hosts/remove" && r.Method == http.MethodPost:
+		if err := a.app.RemoveHosts(); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+
 	case path == "/api/test/start" && r.Method == http.MethodPost:
 		var cfg Config
 		if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
