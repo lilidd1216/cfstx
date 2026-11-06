@@ -243,6 +243,27 @@ function openRepo() {
 }
 
 // ---------------------------------------------------------------------------
+// 自定义标题栏窗口控制
+// ---------------------------------------------------------------------------
+
+function onTitleBarDown(e) {
+  if (e.button !== 0) return
+  httpPost('/api/window/drag').catch(() => {})
+}
+
+function minimizeApp() {
+  httpPost('/api/window/minimize').catch(() => {})
+}
+
+function toggleMaximize() {
+  httpPost('/api/window/maximize').catch(() => {})
+}
+
+function closeApp() {
+  httpPost('/api/window/close').catch(() => {})
+}
+
+// ---------------------------------------------------------------------------
 // SSE 事件
 // ---------------------------------------------------------------------------
 
@@ -322,19 +343,29 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <v-app>
+  <div class="window-root">
+    <!-- 自定义标题栏（系统标题栏已在 Go 端隐藏） -->
+    <div class="titlebar" @mousedown="onTitleBarDown">
+    <div class="titlebar-brand">
+      <v-icon size="16" color="primary">mdi-speedometer</v-icon>
+      <span>CFSTX</span>
+    </div>
+    <div class="titlebar-controls" @mousedown.stop>
+      <button class="tb-btn" title="最小化" @click="minimizeApp">
+        <v-icon size="14">mdi-window-minimize</v-icon>
+      </button>
+      <button class="tb-btn" title="最大化 / 还原" @click="toggleMaximize">
+        <v-icon size="14">mdi-window-maximize</v-icon>
+      </button>
+      <button class="tb-btn close" title="关闭" @click="closeApp">
+        <v-icon size="14">mdi-window-close</v-icon>
+      </button>
+    </div>
+  </div>
+
+  <v-app class="app-root">
     <!-- 左侧导航栏 -->
     <v-navigation-drawer permanent width="220" color="surface" class="nav-drawer">
-      <div class="brand">
-        <v-icon color="primary" size="30">mdi-speedometer</v-icon>
-        <div>
-          <div class="brand-name">CFSTX</div>
-          <div class="brand-sub">Cloudflare 优选测速</div>
-        </div>
-      </div>
-
-      <v-divider />
-
       <v-list nav density="comfortable" class="nav-list">
         <v-list-item
           v-for="item in navItems"
@@ -515,37 +546,91 @@ onBeforeUnmount(() => {
     >
       {{ snackbar.text }}
     </v-snackbar>
-  </v-app>
+    </v-app>
+  </div>
 </template>
 
 <style scoped>
+.window-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* 自定义标题栏 */
+.titlebar {
+  height: 38px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #1b1b21;
+  border-bottom: 1px solid #23232b;
+  user-select: none;
+}
+
+.titlebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 14px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: #e4e4e7;
+}
+
+.titlebar-controls {
+  display: flex;
+  height: 100%;
+}
+
+.tb-btn {
+  width: 46px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: #a1a1aa;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+  padding: 0;
+}
+
+.tb-btn:hover {
+  background: #2a2a33;
+  color: #ffffff;
+}
+
+.tb-btn.close:hover {
+  background: #e81123;
+  color: #ffffff;
+}
+
+/* 占据标题栏下方的剩余空间 */
+.app-root {
+  flex: 1 1 auto;
+  min-height: 0 !important;
+  height: auto !important;
+}
+
+.app-root :deep(.v-application__wrap) {
+  min-height: 0 !important;
+  height: 100%;
+}
+
+/* 导航栏默认 fixed 定位于视口顶部，需下移到标题栏下方 */
 .nav-drawer {
+  top: 38px !important;
+  height: calc(100vh - 38px) !important;
   border-right: 1px solid #23232b !important;
 }
 
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 20px 20px 18px;
-}
-
-.brand-name {
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  color: #f4f4f5;
-  line-height: 1.2;
-}
-
-.brand-sub {
-  font-size: 11px;
-  color: #71717a;
-  margin-top: 2px;
-}
-
 .nav-list {
-  padding: 8px 10px;
+  padding: 14px 10px 8px;
 }
 
 .nav-footer {

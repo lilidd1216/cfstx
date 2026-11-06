@@ -17,11 +17,17 @@ type API struct {
 	app    *App
 	hub    *EventHub
 	assets embed.FS
+	hwnd   uintptr
 }
 
 // NewAPI 创建 API 实例。
 func NewAPI(app *App, hub *EventHub, assets embed.FS) *API {
 	return &API{app: app, hub: hub, assets: assets}
+}
+
+// SetHWND 在窗口创建后注入窗口句柄，用于自定义标题栏的窗口控制。
+func (a *API) SetHWND(hwnd uintptr) {
+	a.hwnd = hwnd
 }
 
 // Routes 返回完整的 HTTP 路由。
@@ -120,6 +126,22 @@ func (a *API) handleAPI(w http.ResponseWriter, r *http.Request) {
 
 	case path == "/api/events" && r.Method == http.MethodGet:
 		a.handleEvents(w, r)
+
+	case path == "/api/window/drag" && r.Method == http.MethodPost:
+		startWindowDrag(a.hwnd)
+		writeJSON(w, map[string]bool{"ok": true})
+
+	case path == "/api/window/minimize" && r.Method == http.MethodPost:
+		minimizeWindow(a.hwnd)
+		writeJSON(w, map[string]bool{"ok": true})
+
+	case path == "/api/window/maximize" && r.Method == http.MethodPost:
+		toggleMaximizeWindow(a.hwnd)
+		writeJSON(w, map[string]bool{"ok": true})
+
+	case path == "/api/window/close" && r.Method == http.MethodPost:
+		closeWindow(a.hwnd)
+		writeJSON(w, map[string]bool{"ok": true})
 
 	case path == "/api/open-url" && r.Method == http.MethodPost:
 		var body struct {

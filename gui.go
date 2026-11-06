@@ -54,6 +54,11 @@ func runGUI(assets embed.FS) error {
 	}
 	defer w.Destroy()
 
+	// 去掉系统标题栏，由前端绘制自定义标题栏
+	hwnd := uintptr(w.Window())
+	removeWindowTitleBar(hwnd)
+	api.SetHWND(hwnd)
+
 	// 第二步：窗口就绪后再启动 HTTP 服务
 	srv := &http.Server{Handler: api.Routes()}
 	go func() {
