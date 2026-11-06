@@ -57,6 +57,10 @@ if (-not (Test-Path $iscc)) {
 & $iscc "installer.iss" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "安装包编译失败" }
 
+# 在低完整性沙箱目录中构建的安装包会继承 Low IL，
+# 运行时无法写入 %TEMP% 会报「Error 5: 拒绝访问」，统一提升为 Medium。
+icacls "dist\CFSTX-Setup-$verNum.exe" /setintegritylevel Medium | Out-Null
+
 # 6. 打包免安装 zip
 Write-Host "[5/6] 打包免安装版..." -ForegroundColor Cyan
 New-Item -ItemType Directory -Path "dist" -Force | Out-Null
@@ -68,6 +72,7 @@ Copy-Item "ip.txt", "ipv6.txt", "LICENSE", "version.txt" $zipDir
 Copy-Item "script" $zipDir -Recurse
 Compress-Archive -Path "$zipDir\*" -DestinationPath "dist\CFSTX-$verNum-portable.zip" -Force
 Remove-Item $zipDir -Recurse -Force
+icacls "dist\CFSTX-$verNum-portable.zip" /setintegritylevel Medium | Out-Null
 
 # 7. 输出结果
 Write-Host "[6/6] 完成" -ForegroundColor Green
