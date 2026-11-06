@@ -1,5 +1,19 @@
-dist
-Releases
+# 构建产物
+/dist/
+/Releases/
+/build/bin/
 *.exe
 *.csv
+
+# 前端
+node_modules/
+frontend/dist/*
+!frontend/dist/.gitkeep
+
+# 临时调试输出
+*_out.txt
+*_err.txt
+*.md5
+
+# 本地工具
 .codegraph/

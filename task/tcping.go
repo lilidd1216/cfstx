@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gitee.com/liliaic/cfstx/utils"
@@ -32,6 +33,7 @@ type Ping struct {
 	csv     utils.PingDelaySet
 	control chan bool
 	bar     *utils.Bar
+	done    int32
 }
 
 func checkPingDefault() {
@@ -129,12 +131,25 @@ func (p *Ping) appendIPData(data *utils.PingData) {
 
 // handle tcping
 func (p *Ping) tcpingHandler(ip *net.IPAddr) {
+	if cancelled() {
+		p.bar.Grow(1, "")
+		return
+	}
 	recv, totalDlay, colo := p.checkConnection(ip)
 	nowAble := len(p.csv)
 	if recv != 0 {
 		nowAble++
 	}
 	p.bar.Grow(1, strconv.Itoa(nowAble))
+
+	current := int(atomic.AddInt32(&p.done, 1))
+	emitProgress(ProgressEvent{
+		Stage:     "ping",
+		Current:   current,
+		Total:     len(p.ips),
+		Available: nowAble,
+	})
+
 	if recv == 0 {
 		return
 	}
