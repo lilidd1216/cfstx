@@ -1,5 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import ConfigPanel from './components/ConfigPanel.vue'
 import ResultTable from './components/ResultTable.vue'
 import HistoryDialog from './components/HistoryDialog.vue'
@@ -60,6 +62,13 @@ const pageMeta = {
 }
 
 const currentMeta = computed(() => pageMeta[currentPage.value] || { title: '', desc: '' })
+
+// 更新说明为 Markdown 格式，渲染后仍需 sanitize 防止注入
+const renderedUpdateBody = computed(() => {
+  const body = updateInfo.value?.body
+  if (!body) return ''
+  return DOMPurify.sanitize(marked.parse(body, { gfm: true, breaks: true }))
+})
 
 // ---------------------------------------------------------------------------
 // HTTP 通信
@@ -605,7 +614,8 @@ onBeforeUnmount(() => {
             <v-icon size="16">mdi-arrow-right</v-icon>
             <v-chip size="small" color="primary" variant="tonal">{{ updateInfo?.latest }}</v-chip>
           </div>
-          <div class="update-body">{{ updateInfo?.body || '暂无更新说明' }}</div>
+          <div v-if="renderedUpdateBody" class="update-body" v-html="renderedUpdateBody"></div>
+          <div v-else class="update-body">暂无更新说明</div>
         </v-card-text>
         <v-divider />
 
@@ -775,15 +785,117 @@ onBeforeUnmount(() => {
 }
 
 .update-body {
-  white-space: pre-wrap;
   font-size: 13px;
-  line-height: 1.6;
+  line-height: 1.7;
   color: #a1a1aa;
-  max-height: 260px;
+  max-height: 320px;
   overflow-y: auto;
-  padding: 12px;
+  padding: 14px 16px;
   background: #16161a;
   border-radius: 8px;
   border: 1px solid #23232b;
+}
+
+.update-body :deep(h1),
+.update-body :deep(h2),
+.update-body :deep(h3) {
+  color: #e4e4e7;
+  font-weight: 600;
+  margin: 14px 0 8px;
+  line-height: 1.4;
+}
+
+.update-body :deep(h1) { font-size: 18px; }
+.update-body :deep(h2) { font-size: 16px; }
+.update-body :deep(h3) { font-size: 14px; }
+
+.update-body :deep(h1:first-child),
+.update-body :deep(h2:first-child),
+.update-body :deep(h3:first-child) {
+  margin-top: 0;
+}
+
+.update-body :deep(p) {
+  margin: 8px 0;
+}
+
+.update-body :deep(ul),
+.update-body :deep(ol) {
+  padding-left: 20px;
+  margin: 8px 0;
+}
+
+.update-body :deep(li) {
+  margin: 4px 0;
+}
+
+.update-body :deep(code) {
+  background: #26262e;
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+  font-size: 12px;
+  color: #c4b5fd;
+}
+
+.update-body :deep(pre) {
+  background: #101014;
+  padding: 12px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+
+.update-body :deep(pre code) {
+  background: none;
+  padding: 0;
+  color: #d4d4d8;
+}
+
+.update-body :deep(a) {
+  color: #8b5cf6;
+  text-decoration: none;
+}
+
+.update-body :deep(a:hover) {
+  text-decoration: underline;
+}
+
+.update-body :deep(table) {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 10px 0;
+  font-size: 12px;
+}
+
+.update-body :deep(th),
+.update-body :deep(td) {
+  border: 1px solid #2a2a33;
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.update-body :deep(th) {
+  background: #22222a;
+  color: #d4d4d8;
+  font-weight: 600;
+}
+
+.update-body :deep(blockquote) {
+  border-left: 3px solid #3a3a45;
+  padding-left: 12px;
+  margin: 8px 0;
+  color: #71717a;
+}
+
+.update-body :deep(hr) {
+  border: none;
+  border-top: 1px solid #2a2a33;
+  margin: 12px 0;
+}
+
+.update-body :deep(strong) {
+  color: #e4e4e7;
+  font-weight: 600;
 }
 </style>
