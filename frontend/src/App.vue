@@ -37,6 +37,8 @@ const snackbar = ref({ show: false, text: '', color: 'success' })
 const version = ref('v1.0.0')
 const elapsed = ref(0)
 const currentPage = ref('prefer-ip')
+const updateDialog = ref(false)
+const updateInfo = ref(null)
 
 let timer = null
 let startedAt = 0
@@ -243,6 +245,28 @@ function openRepo() {
 }
 
 // ---------------------------------------------------------------------------
+// 更新检查
+// ---------------------------------------------------------------------------
+
+async function checkUpdate() {
+  try {
+    const r = await httpGet('/api/update/check')
+    if (r && r.hasUpdate) {
+      updateInfo.value = r
+      updateDialog.value = true
+    }
+  } catch (_) {
+    // 网络异常时静默忽略
+  }
+}
+
+function openReleasePage() {
+  const url = updateInfo.value?.url || 'https://gitee.com/liliaic/cfstx/releases'
+  httpPost('/api/open-url', { url }).catch(() => {})
+  updateDialog.value = false
+}
+
+// ---------------------------------------------------------------------------
 // SSE 事件
 // ---------------------------------------------------------------------------
 
@@ -310,6 +334,9 @@ onMounted(async () => {
     const v = await httpGet('/api/version')
     if (v?.version) version.value = v.version
   } catch (_) { /* 忽略 */ }
+
+  // 延迟检查更新，避免影响启动速度
+  setTimeout(checkUpdate, 1500)
 })
 
 onBeforeUnmount(() => {
@@ -515,6 +542,33 @@ onBeforeUnmount(() => {
     >
       {{ snackbar.text }}
     </v-snackbar>
+
+    <!-- 发现新版本 -->
+    <v-dialog v-model="updateDialog" max-width="620">
+      <v-card class="update-card">
+        <v-card-title class="d-flex align-center py-4">
+          <v-icon color="primary" class="mr-2">mdi-update</v-icon>
+          <span>发现新版本 {{ updateInfo?.latest }}</span>
+        </v-card-title>
+        <v-divider />
+        <v-card-text>
+          <div class="d-flex align-center ga-3 mb-4">
+            <v-chip size="small" variant="tonal">当前 {{ updateInfo?.current }}</v-chip>
+            <v-icon size="16">mdi-arrow-right</v-icon>
+            <v-chip size="small" color="primary" variant="tonal">{{ updateInfo?.latest }}</v-chip>
+          </div>
+          <div class="update-body">{{ updateInfo?.body || '暂无更新说明' }}</div>
+        </v-card-text>
+        <v-divider />
+        <v-card-actions class="pa-3">
+          <v-spacer />
+          <v-btn variant="text" @click="updateDialog = false">稍后</v-btn>
+          <v-btn color="primary" prepend-icon="mdi-download" @click="openReleasePage">
+            前往下载
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-app>
 </template>
 
@@ -636,5 +690,23 @@ onBeforeUnmount(() => {
 .mono {
   font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
   font-variant-numeric: tabular-nums;
+}
+
+.update-card {
+  background: #1b1b21 !important;
+  border: 1px solid #2a2a33;
+}
+
+.update-body {
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #a1a1aa;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 12px;
+  background: #16161a;
+  border-radius: 8px;
+  border: 1px solid #23232b;
 }
 </style>

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"gitee.com/liliaic/cfstx/version"
 )
 
 // API 提供本地 HTTP 接口，前端通过 fetch 调用。
@@ -116,6 +118,22 @@ func (a *API) handleAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{
 			"version": a.app.GetVersion(),
 			"latest":  a.app.CheckUpdate(),
+		})
+
+	case path == "/api/update/check" && r.Method == http.MethodGet:
+		info, err := a.app.CheckRelease()
+		if err != nil || info == nil {
+			writeJSON(w, map[string]any{"hasUpdate": false})
+			return
+		}
+		writeJSON(w, map[string]any{
+			"hasUpdate": version.IsNewer(version.Current, info.TagName),
+			"current":   version.Current,
+			"latest":    info.TagName,
+			"name":      info.Name,
+			"body":      info.Body,
+			"url":       info.HTMLURL,
+			"assets":    info.Assets,
 		})
 
 	case path == "/api/events" && r.Method == http.MethodGet:

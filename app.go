@@ -446,6 +446,11 @@ func (a *App) CheckUpdate() string {
 	return version.Check()
 }
 
+// CheckRelease 查询 Gitee 最新 Release 信息。
+func (a *App) CheckRelease() (*version.ReleaseInfo, error) {
+	return version.CheckRelease()
+}
+
 // ---------------------------------------------------------------------------
 // 文件与路径
 // ---------------------------------------------------------------------------
