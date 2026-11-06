@@ -43,10 +43,9 @@ mkdir cfstx
 # 进入文件夹（后续更新，只需要从这里重复下面的下载、解压命令即可）
 cd cfstx
 
-# 下载 CFSTX 压缩包（这个地址是始终指向最新版本，可自行根据需求替换 URL 末尾的 [文件名]）
-wget -N https://gitee.com/liliaic/cfstx/releases/latest/download/cfstx_linux_amd64.tar.gz
+# 下载 CFSTX 压缩包（请将下方 v1.0.0 替换为实际发布版本号，可前往 Releases 页面查看）
+wget -N https://gitee.com/liliaic/cfstx/releases/download/v1.0.0/cfstx_linux_amd64.tar.gz
 # 如果下载失败的话，尝试删除 -N 参数（如果是为了更新，则记得提前删除旧压缩包 rm cfstx_linux_amd64.tar.gz ）
-# 如果要下载特定版本的，可以改用这种，例如：wget -N https://gitee.com/liliaic/cfstx/releases/download/v2.3.4/cfstx_linux_amd64.tar.gz
 
 # 解压（不需要删除旧文件，会直接覆盖，自行根据需求替换 文件名）
 tar -zxf cfstx_linux_amd64.tar.gz
