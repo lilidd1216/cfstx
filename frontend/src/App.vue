@@ -39,6 +39,9 @@ const elapsed = ref(0)
 const currentPage = ref('prefer-ip')
 const updateDialog = ref(false)
 const updateInfo = ref(null)
+const updateState = ref('idle') // idle | downloading | downloaded | installing
+const downloadProgress = ref(0)
+const downloadedPath = ref('')
 
 let timer = null
 let startedAt = 0
@@ -253,6 +256,9 @@ async function checkUpdate() {
     const r = await httpGet('/api/update/check')
     if (r && r.hasUpdate) {
       updateInfo.value = r
+      updateState.value = 'idle'
+      downloadProgress.value = 0
+      downloadedPath.value = ''
       updateDialog.value = true
     }
   } catch (_) {
@@ -264,6 +270,44 @@ function openReleasePage() {
   const url = updateInfo.value?.url || 'https://gitee.com/liliaic/cfstx/releases'
   httpPost('/api/open-url', { url }).catch(() => {})
   updateDialog.value = false
+}
+
+function findSetupAsset(assets) {
+  if (!Array.isArray(assets)) return null
+  return assets.find((a) => /^CFSTX-Setup-.*\.exe$/i.test(a.name)) || null
+}
+
+async function startDownload() {
+  const asset = findSetupAsset(updateInfo.value?.assets)
+  if (!asset) {
+    toast('未找到安装包，已为你打开 Release 页面', 'warning')
+    openReleasePage()
+    return
+  }
+  updateState.value = 'downloading'
+  downloadProgress.value = 0
+  try {
+    const r = await httpPost('/api/update/download', {
+      url: asset.url,
+      filename: asset.name,
+    })
+    downloadedPath.value = r.path
+    updateState.value = 'downloaded'
+  } catch (e) {
+    toast(String(e), 'error')
+    updateState.value = 'idle'
+  }
+}
+
+async function installUpdate() {
+  if (!downloadedPath.value) return
+  updateState.value = 'installing'
+  try {
+    await httpPost('/api/update/install', { path: downloadedPath.value })
+  } catch (e) {
+    toast(String(e), 'error')
+    updateState.value = 'downloaded'
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -309,6 +353,10 @@ function handleEvent(event, data) {
       stopTimer()
       loadHistory()
       toast(`测速完成，共 ${results.value.length} 个结果`, 'success')
+      break
+
+    case 'update:progress':
+      downloadProgress.value = data?.percent || 0
       break
   }
 }
@@ -560,13 +608,33 @@ onBeforeUnmount(() => {
           <div class="update-body">{{ updateInfo?.body || '暂无更新说明' }}</div>
         </v-card-text>
         <v-divider />
-        <v-card-actions class="pa-3">
+
+        <v-card-actions v-if="updateState === 'idle'" class="pa-3">
           <v-spacer />
           <v-btn variant="text" @click="updateDialog = false">稍后</v-btn>
-          <v-btn color="primary" prepend-icon="mdi-download" @click="openReleasePage">
-            前往下载
-          </v-btn>
+          <v-btn color="primary" prepend-icon="mdi-download" @click="startDownload">立即更新</v-btn>
         </v-card-actions>
+
+        <div v-else-if="updateState === 'downloading'" class="px-6 pb-5">
+          <div class="d-flex justify-space-between text-caption mb-2">
+            <span>正在下载安装包...</span>
+            <span class="mono">{{ downloadProgress.toFixed(1) }}%</span>
+          </div>
+          <v-progress-linear :model-value="downloadProgress" color="primary" height="8" rounded />
+        </div>
+
+        <v-card-actions v-else-if="updateState === 'downloaded'" class="pa-3">
+          <v-spacer />
+          <v-btn variant="text" @click="updateDialog = false">稍后</v-btn>
+          <v-btn color="primary" prepend-icon="mdi-cog-play" @click="installUpdate">立即安装</v-btn>
+        </v-card-actions>
+
+        <div v-else-if="updateState === 'installing'" class="px-6 pb-5">
+          <div class="d-flex align-center ga-2 text-caption">
+            <v-progress-circular indeterminate size="16" width="2" color="primary" />
+            <span>正在启动安装程序，应用即将退出...</span>
+          </div>
+        </div>
       </v-card>
     </v-dialog>
   </v-app>

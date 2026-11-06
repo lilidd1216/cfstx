@@ -4,7 +4,10 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -449,6 +452,91 @@ func (a *App) CheckUpdate() string {
 // CheckRelease 查询 Gitee 最新 Release 信息。
 func (a *App) CheckRelease() (*version.ReleaseInfo, error) {
 	return version.CheckRelease()
+}
+
+// DownloadUpdate 把安装包下载到临时目录，进度通过 update:progress 事件推送。
+func (a *App) DownloadUpdate(url, filename string) (string, error) {
+	if filename == "" {
+		filename = "CFSTX-Setup.exe"
+	}
+	dir := filepath.Join(os.TempDir(), "CFSTX-Update")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("创建下载目录失败: %w", err)
+	}
+	dest := filepath.Join(dir, filename)
+
+	client := &http.Client{Timeout: 5 * time.Minute}
+	resp, err := client.Get(url)
+	if err != nil {
+		return "", fmt.Errorf("下载失败: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("下载失败: HTTP %s", resp.Status)
+	}
+
+	f, err := os.Create(dest)
+	if err != nil {
+		return "", fmt.Errorf("创建文件失败: %w", err)
+	}
+	defer f.Close()
+
+	total := resp.ContentLength
+	var written int64
+	buf := make([]byte, 64*1024)
+	lastEmit := time.Now()
+
+	for {
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			if _, werr := f.Write(buf[:n]); werr != nil {
+				return "", werr
+			}
+			written += int64(n)
+			if time.Since(lastEmit) > 100*time.Millisecond {
+				percent := 0.0
+				if total > 0 {
+					percent = float64(written) / float64(total) * 100
+				}
+				a.emit("update:progress", map[string]any{
+					"downloaded": written,
+					"total":      total,
+					"percent":    percent,
+				})
+				lastEmit = time.Now()
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return "", readErr
+		}
+	}
+
+	a.emit("update:progress", map[string]any{
+		"downloaded": written,
+		"total":      total,
+		"percent":    100.0,
+	})
+	return dest, nil
+}
+
+// InstallUpdate 启动安装程序并退出当前应用。
+func (a *App) InstallUpdate(path string) error {
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("安装包不存在: %w", err)
+	}
+	cmd := exec.Command(path, "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART")
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("启动安装程序失败: %w", err)
+	}
+	// 延迟退出，确保 HTTP 响应先返回
+	go func() {
+		time.Sleep(800 * time.Millisecond)
+		os.Exit(0)
+	}()
+	return nil
 }
 
 // ---------------------------------------------------------------------------

@@ -11,11 +11,11 @@ import (
 	"time"
 )
 
-const (
-	// Current 是程序默认版本号，构建时可通过
-	// -ldflags "-X gitee.com/liliaic/cfstx/version.Current=v1.0.0" 覆盖。
-	Current = "v1.0.0"
+// Current 是程序版本号，构建时可通过
+// -ldflags "-X gitee.com/liliaic/cfstx/version.Current=v1.0.0" 覆盖。
+var Current = "v1.0.0"
 
+const (
 	// RepoURL 是项目主页。
 	RepoURL = "https://gitee.com/liliaic/cfstx"
 

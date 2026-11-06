@@ -42,7 +42,7 @@ Pop-Location
 # 4. 编译 exe（GUI 子系统）
 Write-Host "[3/6] 编译 cfstx.exe..." -ForegroundColor Cyan
 New-Item -ItemType Directory -Path "build\bin" -Force | Out-Null
-go build -ldflags "-H windowsgui" -o "build\bin\cfstx.exe" .
+go build -ldflags "-H windowsgui -X gitee.com/liliaic/cfstx/version.Current=v$verNum" -o "build\bin\cfstx.exe" .
 icacls "build\bin\cfstx.exe" /setintegritylevel Medium | Out-Null
 
 # 5. 编译安装包

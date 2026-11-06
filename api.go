@@ -136,6 +136,36 @@ func (a *API) handleAPI(w http.ResponseWriter, r *http.Request) {
 			"assets":    info.Assets,
 		})
 
+	case path == "/api/update/download" && r.Method == http.MethodPost:
+		var body struct {
+			URL      string `json:"url"`
+			Filename string `json:"filename"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		dest, err := a.app.DownloadUpdate(body.URL, body.Filename)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, map[string]string{"path": dest})
+
+	case path == "/api/update/install" && r.Method == http.MethodPost:
+		var body struct {
+			Path string `json:"path"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := a.app.InstallUpdate(body.Path); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+
 	case path == "/api/events" && r.Method == http.MethodGet:
 		a.handleEvents(w, r)
 
