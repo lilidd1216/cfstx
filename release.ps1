@@ -45,6 +45,23 @@ New-Item -ItemType Directory -Path "build\bin" -Force | Out-Null
 go build -ldflags "-H windowsgui -X gitee.com/liliaic/cfstx/version.Current=v$verNum" -o "build\bin\cfstx.exe" .
 icacls "build\bin\cfstx.exe" /setintegritylevel Medium | Out-Null
 
+# 校验：exe 的时间戳必须晚于所有源码，否则说明打包了旧代码
+# （v1.0.0 就因为提交源码后没重新编译，导致安装包里缺少更新接口）
+$exeTime = (Get-Item "build\bin\cfstx.exe").LastWriteTime
+$newestSource = Get-ChildItem -Recurse -File |
+    Where-Object {
+        $_.Extension -in '.go', '.vue', '.js' -and
+        $_.FullName -notmatch '\\node_modules\\' -and
+        $_.FullName -notmatch '\\build\\' -and
+        $_.FullName -notmatch '\\frontend\\dist\\'
+    } |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
+if ($newestSource -and $newestSource.LastWriteTime -gt $exeTime) {
+    throw "编译产物比源码旧：$($newestSource.Name) 修改于 $($newestSource.LastWriteTime)，而 exe 生成于 $exeTime。请检查编译步骤。"
+}
+Write-Host "  校验通过：exe 时间戳晚于所有源码" -ForegroundColor Green
+
 # 5. 编译安装包
 Write-Host "[4/6] 编译安装包..." -ForegroundColor Cyan
 $iscc = "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"

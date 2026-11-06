@@ -100,6 +100,14 @@ func (a *API) handleAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, map[string]string{"path": path})
 
+	case path == "/api/export/log" && r.Method == http.MethodPost:
+		path, err := a.app.ExportLog("")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, map[string]string{"path": path})
+
 	case path == "/api/history" && r.Method == http.MethodGet:
 		writeJSON(w, a.app.GetHistory())
 

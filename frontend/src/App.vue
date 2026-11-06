@@ -43,6 +43,8 @@ const elapsed = ref(0)
 const currentPage = ref('prefer-ip')
 const updateDialog = ref(false)
 const updateInfo = ref(null)
+const diagnosis = ref(null)
+const diagnosisDialog = ref(false)
 const updateState = ref('idle') // idle | downloading | downloaded | installing
 const downloadProgress = ref(0)
 const downloadedPath = ref('')
@@ -233,6 +235,15 @@ async function exportTxt() {
   }
 }
 
+async function exportLog() {
+  try {
+    const res = await httpPost('/api/export/log')
+    toast('日志已导出到 ' + res.path, 'success')
+  } catch (e) {
+    toast(String(e), 'error')
+  }
+}
+
 async function pickIpFile() {
   const path = window.prompt('输入 IP 数据文件路径（相对或绝对）', config.value.ipFile)
   if (path) config.value.ipFile = path
@@ -402,7 +413,13 @@ function handleEvent(event, data) {
       running.value = false
       stopTimer()
       loadHistory()
-      toast(`测速完成，共 ${results.value.length} 个结果`, 'success')
+      if (data?.diagnosis) {
+        // 一个结果都没有：弹窗说明卡在哪一步，而不是静默失败
+        diagnosis.value = data.diagnosis
+        diagnosisDialog.value = true
+      } else {
+        toast(`测速完成，共 ${results.value.length} 个结果`, 'success')
+      }
       break
 
     case 'update:progress':
@@ -651,6 +668,59 @@ onBeforeUnmount(() => {
       {{ snackbar.text }}
     </v-snackbar>
 
+    <!-- 测速结果为 0 时的诊断弹窗 -->
+    <v-dialog v-model="diagnosisDialog" max-width="600">
+      <v-card class="diagnosis-card" v-if="diagnosis">
+        <v-card-title class="d-flex align-center py-4">
+          <v-icon color="warning" class="mr-2">mdi-alert-circle-outline</v-icon>
+          <span class="text-h6">本次测速没有筛选出任何 IP</span>
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pt-4">
+          <div class="diagnosis-reason">{{ diagnosis.reason }}</div>
+
+          <div class="diagnosis-steps mt-4">
+            <div class="diag-row" :class="{ zero: !diagnosis.totalTargets }">
+              <span class="diag-label">① 加载到的测速目标</span>
+              <span class="diag-value">{{ diagnosis.totalTargets }}</span>
+            </div>
+            <div class="diag-row" :class="{ zero: diagnosis.totalTargets > 0 && !diagnosis.available }">
+              <span class="diag-label">② 延迟测速连通</span>
+              <span class="diag-value">{{ diagnosis.available }}</span>
+            </div>
+            <div class="diag-row" :class="{ zero: diagnosis.available > 0 && !diagnosis.afterDelay }">
+              <span class="diag-label">③ 通过延迟/丢包过滤</span>
+              <span class="diag-value">{{ diagnosis.afterDelay }}</span>
+            </div>
+            <div class="diag-row" :class="{ zero: diagnosis.afterDelay > 0 && !diagnosis.downloadTested }">
+              <span class="diag-label">④ 完成下载测速</span>
+              <span class="diag-value">{{ diagnosis.downloadTested }}</span>
+            </div>
+            <div class="diag-row" :class="{ zero: diagnosis.downloadTested > 0 && !diagnosis.maxSpeed }">
+              <span class="diag-label">⑤ 最高下载速度</span>
+              <span class="diag-value">{{ (diagnosis.maxSpeed || 0).toFixed(2) }} MB/s</span>
+            </div>
+          </div>
+
+          <v-alert type="info" variant="tonal" density="compact" class="mt-4">
+            <div class="text-body-2">{{ diagnosis.suggestion }}</div>
+          </v-alert>
+        </v-card-text>
+        <v-card-actions class="px-4 pb-3">
+          <v-btn
+            variant="tonal"
+            size="small"
+            prepend-icon="mdi-file-document-outline"
+            @click="exportLog"
+          >
+            导出日志
+          </v-btn>
+          <v-spacer />
+          <v-btn variant="text" @click="diagnosisDialog = false">知道了</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- 发现新版本 -->
     <v-dialog v-model="updateDialog" max-width="620">
       <v-card class="update-card">
@@ -833,6 +903,53 @@ onBeforeUnmount(() => {
 .update-card {
   background: #1b1b21 !important;
   border: 1px solid #2a2a33;
+}
+
+/* 测速诊断弹窗 */
+.diagnosis-card {
+  background: #1b1b21 !important;
+  border: 1px solid #2a2a33;
+}
+
+.diagnosis-reason {
+  font-size: 15px;
+  color: #fbbf24;
+  line-height: 1.6;
+}
+
+.diagnosis-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.diag-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 9px 12px;
+  border-radius: 6px;
+  background: #17171c;
+  font-size: 13px;
+}
+
+.diag-row.zero {
+  background: rgba(239, 68, 68, 0.12);
+  border-left: 3px solid #ef4444;
+}
+
+.diag-label {
+  color: #8b8b96;
+}
+
+.diag-value {
+  font-family: 'Cascadia Mono', 'Consolas', monospace;
+  color: #e4e4e7;
+  font-weight: 600;
+}
+
+.diag-row.zero .diag-value {
+  color: #ef4444;
 }
 
 .update-body {

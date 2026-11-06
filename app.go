@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -102,6 +103,25 @@ type Status struct {
 	Results  []ResultItem `json:"results"`
 }
 
+// LogEntry 是一次测速过程中的一条日志。
+type LogEntry struct {
+	Time    string `json:"time"`
+	Level   string `json:"level"`
+	Stage   string `json:"stage"`
+	Message string `json:"message"`
+}
+
+// Diagnosis 描述一次测速结果为 0 时的具体原因，供界面提示用户。
+type Diagnosis struct {
+	TotalTargets   int    `json:"totalTargets"`   // 加载到的测速目标总数
+	Available      int    `json:"available"`      // 延迟测速中连通的 IP 数
+	AfterDelay     int    `json:"afterDelay"`     // 通过延迟/丢包过滤的 IP 数
+	DownloadTested int    `json:"downloadTested"` // 实际做了下载测速的 IP 数
+	MaxSpeed       float64 `json:"maxSpeed"`      // 测到的最高下载速度 MB/s
+	Reason         string `json:"reason"`         // 直接原因
+	Suggestion     string `json:"suggestion"`     // 建议操作
+}
+
 // ProgressInfo 是进度信息。
 type ProgressInfo struct {
 	Current   int     `json:"current"`
@@ -126,6 +146,24 @@ type App struct {
 	onlineMu    sync.Mutex
 	onlineKey   string
 	onlineCache []*task.Target
+
+	// 本次运行的过程日志，供导出分析
+	logs []LogEntry
+}
+
+// appendLog 追加一条运行日志（最多保留最近 5000 条）。
+func (a *App) appendLog(level, stage, msg string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.logs = append(a.logs, LogEntry{
+		Time:    time.Now().Format("15:04:05.000"),
+		Level:   level,
+		Stage:   stage,
+		Message: msg,
+	})
+	if len(a.logs) > 5000 {
+		a.logs = a.logs[len(a.logs)-5000:]
+	}
 }
 
 // NewApp 创建应用实例。
@@ -279,6 +317,7 @@ func (a *App) StartTest(cfg Config) error {
 	a.running = true
 	a.phase = "ping"
 	a.results = nil
+	a.logs = nil
 	a.progress = ProgressInfo{}
 	a.mu.Unlock()
 
@@ -322,7 +361,11 @@ func (a *App) runTest(cfg Config) {
 	task.ResetCancel()
 	applyConfig(cfg)
 
+	var totalTargets int
 	task.ProgressHook = func(e task.ProgressEvent) {
+		if e.Stage == "ping" && e.Total > totalTargets {
+			totalTargets = e.Total
+		}
 		info := ProgressInfo{
 			Current:   e.Current,
 			Total:     e.Total,
@@ -340,6 +383,7 @@ func (a *App) runTest(cfg Config) {
 		a.emit("test:progress", e)
 	}
 	task.LogHook = func(e task.LogEvent) {
+		a.appendLog(e.Level, "", e.Msg)
 		a.emit("test:log", e)
 	}
 	// 下载测速每完成一个达标 IP 就实时推给界面，不必等全部结束
@@ -357,6 +401,9 @@ func (a *App) runTest(cfg Config) {
 	}()
 
 	task.InitRandSeed()
+	a.appendLog("info", "start", fmt.Sprintf(
+		"开始测速 | 来源=%v 端口=%d HTTPing=%v 延迟≤%dms 丢包≤%.2f 速度≥%.2fMB/s 数量=%d",
+		cfg.Sources, cfg.Port, cfg.Httping, cfg.MaxDelay, cfg.MaxLossRate, cfg.MinSpeed, cfg.TestCount))
 	a.emit("test:started", map[string]any{"time": start.Format("15:04:05")})
 
 	// 勾选了在线来源时：本次启动首次抓取并缓存，之后的测速直接复用
@@ -423,7 +470,14 @@ func (a *App) runTest(cfg Config) {
 		}
 	}
 
-	pingData := task.NewPing().Run().FilterDelay().FilterLossRate()
+	ping := task.NewPing()
+	pingAll := ping.Run()                             // 延迟测速：返回所有连通的 IP
+	availableCount := len(pingAll)
+	pingData := pingAll.FilterDelay().FilterLossRate() // 再按延迟/丢包条件过滤
+	afterDelay := len(pingData)
+
+	a.appendLog("info", "ping", fmt.Sprintf(
+		"延迟测速完成 | 目标=%d 连通=%d 通过延迟/丢包过滤=%d", totalTargets, availableCount, afterDelay))
 
 	a.mu.Lock()
 	a.phase = "download"
@@ -432,6 +486,9 @@ func (a *App) runTest(cfg Config) {
 
 	speedData := task.TestDownloadSpeed(pingData)
 	results := convertResults(speedData)
+
+	a.appendLog("info", "download", fmt.Sprintf(
+		"下载测速完成 | 参与=%d 结果=%d", len(speedData), len(results)))
 
 	a.mu.Lock()
 	a.results = results
@@ -458,10 +515,17 @@ func (a *App) runTest(cfg Config) {
 	}
 	a.appendHistory(rec)
 
-	a.emit("test:finished", map[string]any{
+	finished := map[string]any{
 		"results":  results,
 		"duration": duration,
-	})
+	}
+	// 结果为 0 时附带诊断信息，让界面能明确告诉用户卡在哪一步
+	if len(results) == 0 {
+		d := buildDiagnosis(cfg, totalTargets, availableCount, afterDelay, speedData)
+		finished["diagnosis"] = d
+		a.appendLog("warn", "diagnosis", d.Reason+"；建议："+d.Suggestion)
+	}
+	a.emit("test:finished", finished)
 }
 
 // applyConfig 把界面配置写入 task/utils 的全局参数。
@@ -500,6 +564,47 @@ func applyConfig(cfg Config) {
 	utils.Output = cfg.OutputFile
 	utils.PrintNum = cfg.PrintNum
 	utils.Silent = true
+}
+
+// buildDiagnosis 根据各阶段的数量，推断结果为空的具体原因并给出建议。
+func buildDiagnosis(cfg Config, totalTargets, available, afterDelay int, speedData utils.DownloadSpeedSet) *Diagnosis {
+	d := &Diagnosis{
+		TotalTargets:   totalTargets,
+		Available:      available,
+		AfterDelay:     afterDelay,
+		DownloadTested: len(speedData),
+	}
+	for _, s := range speedData {
+		if mbps := s.DownloadSpeed / 1024 / 1024; mbps > d.MaxSpeed {
+			d.MaxSpeed = mbps
+		}
+	}
+
+	switch {
+	case totalTargets == 0:
+		d.Reason = "没有加载到任何 IP 目标"
+		d.Suggestion = "确认 ip.txt 与 cfstx.exe 在同一目录，或至少勾选一个在线 IP 来源"
+	case available == 0:
+		d.Reason = "延迟测速中所有 IP 均未响应"
+		d.Suggestion = "检查网络连接；如果开着 VPN/代理请先关闭，测速需要直连每个目标 IP"
+	case afterDelay == 0:
+		d.Reason = fmt.Sprintf("有 %d 个 IP 连通，但延迟全部超过上限 %d ms", available, cfg.MaxDelay)
+		d.Suggestion = "把「延迟上限」调大试试：中国大陆到 Cloudflare 常在 150~250ms，建议先设 300 或 9999 看全貌"
+	case len(speedData) == 0:
+		d.Reason = fmt.Sprintf("%d 个 IP 通过了延迟过滤，但下载测速一个都没完成", afterDelay)
+		d.Suggestion = "稍等几分钟再试；测速地址可能被 Cloudflare 限流"
+	case d.MaxSpeed <= 0:
+		d.Reason = fmt.Sprintf("%d 个 IP 做了下载测速，但全部失败（速度 0）", len(speedData))
+		d.Suggestion = "多为测速地址被限流（HTTP 429）导致。等待 5~10 分钟后重试，或在「测速地址」中换用自建地址"
+	case cfg.MinSpeed > 0:
+		d.Reason = fmt.Sprintf("%d 个 IP 完成测速，最高速度仅 %.2f MB/s，低于下限 %.1f MB/s",
+			len(speedData), d.MaxSpeed, cfg.MinSpeed)
+		d.Suggestion = "调低「速度下限」，或放宽「延迟上限」以纳入更多节点"
+	default:
+		d.Reason = "测速完成但没有产生结果"
+		d.Suggestion = "请在结果区导出日志后反馈"
+	}
+	return d
 }
 
 func convertResultItem(d utils.CloudflareIPData) ResultItem {
@@ -612,6 +717,43 @@ func (a *App) ExportTXT(path string) (string, error) {
 			colo = "N/A"
 		}
 		fmt.Fprintf(&b, "%s:%d#%s %.2fMB/s\n", r.IP, port, colo, r.Speed)
+	}
+
+	if err := os.WriteFile(abs, []byte(b.String()), 0o644); err != nil {
+		return "", fmt.Errorf("写入文件失败: %w", err)
+	}
+	return abs, nil
+}
+
+// ExportLog 把本次运行的完整过程日志写入文本文件，便于排查问题。
+func (a *App) ExportLog(path string) (string, error) {
+	a.mu.Lock()
+	logs := append([]LogEntry(nil), a.logs...)
+	a.mu.Unlock()
+
+	if len(logs) == 0 {
+		return "", fmt.Errorf("没有可导出的日志，请先运行一次测速")
+	}
+
+	name := path
+	if name == "" {
+		name = "cfstx-log.txt"
+	}
+	abs := absOutputPath(name)
+
+	var b strings.Builder
+	b.WriteString("CFSTX 运行日志\n")
+	fmt.Fprintf(&b, "版本: %s\n", version.Current)
+	fmt.Fprintf(&b, "导出时间: %s\n", time.Now().Format("2006-01-02 15:04:05"))
+	fmt.Fprintf(&b, "系统: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+	fmt.Fprintf(&b, "配置目录: %s\n", configDir())
+	b.WriteString(strings.Repeat("=", 64) + "\n\n")
+	for _, l := range logs {
+		stage := ""
+		if l.Stage != "" {
+			stage = "[" + l.Stage + "] "
+		}
+		fmt.Fprintf(&b, "[%s] %-5s %s%s\n", l.Time, strings.ToUpper(l.Level), stage, l.Message)
 	}
 
 	if err := os.WriteFile(abs, []byte(b.String()), 0o644); err != nil {
