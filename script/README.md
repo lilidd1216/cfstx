@@ -1,4 +1,4 @@
-# XIU2/CloudflareSpeedTest - Script(脚本)
+# CFSTX - Script(脚本)
 
 这里都是一些通过调用 **CFSTX** 并**扩展实现更多个性化功能**的脚本。  
 
@@ -17,7 +17,7 @@
 > 小提示：点击↗右上角的三横杠图标按钮即可查看目录~
 
 ****
-## 📑 cfstx_hosts.sh / cfstx_hosts.bat (已内置压缩包)
+## 📑 cfstx_hosts.bat (已内置压缩包)
 
 脚本会运行 CFSTX 获得最快 IP，并替换掉 Hosts 文件中的旧 CDN IP。
 
@@ -91,27 +91,7 @@
 
 ****
 
-## 📑 cfstx_dnspod.sh
-
-如果你的域名托管在 **dnspod**，则可以通过 dnspod 官方提供的 API 来自动更新域名解析记录！  
-脚本会运行 CFSTX 测速获得最快 IP，并通过 Cloudflare API 来更新域名解析记录为这个最快 IP。
-
-> **作者：**[@imashen](https://github.com/imashen)  
-> **使用说明/问题反馈：https://github.com/XIU2/CloudflareSpeedTest/pull/533**
-
-<details>
-<summary><code><strong>「 更新日志」</strong></code></summary>
-
-****
-
-#### 2024年08月06日，版本 v1.0.0
- - **1. 发布** 第一个版本  
-
-</details>
-
-****
-
-## 📑 cfstx_ddns.sh / cfstx_ddns.bat
+## 📑 cfstx_ddns.bat
 
 如果你的域名托管在 **Cloudflare**，则可以通过 Cloudflare 官方提供的 API 来自动更新域名解析记录！  
 脚本会运行 CFSTX 测速获得最快 IP，并通过 Cloudflare API 来更新域名解析记录为这个最快 IP。
@@ -144,28 +124,6 @@
  - **1. 优化** 配置从文件中读取  
 
 #### 2021年01月26日，版本 v1.0.0
- - **1. 发布** 第一个版本  
-
-</details>
-
-****
-
-## 📑 cfstx_dnsmasq.sh
-
-脚本会运行 CFSTX 测速后获取最快 IP 并替换 dnsmasq 配置文件中的旧 Cloudflare CDN IP。  
-
-> **作者：**[@Sving1024](https://github.com/Sving1024)  
-> **使用说明/问题反馈：https://github.com/XIU2/CloudflareSpeedTest/discussions/566**
-
-<details>
-<summary><code><strong>「 更新日志」</strong></code></summary>
-
-****
-
-#### 2025年01月22日，版本 v1.0.1
- - **1. 修复** IPv6 的问题  
-
-#### 2024年12月28日，版本 v1.0.0
  - **1. 发布** 第一个版本  
 
 </details>

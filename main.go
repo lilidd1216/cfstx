@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"runtime"
 	"strings"
 	"time"
 
@@ -151,10 +150,9 @@ func endPrint() {
 	if utils.NoPrintResult() { // 如果不需要打印测速结果，则直接退出
 		return
 	}
-	if runtime.GOOS == "windows" { // 如果是 Windows 系统，则需要按下 回车键 或 Ctrl+C 退出（避免通过双击运行时，测速完毕后直接关闭）
-		fmt.Printf("按下 回车键 或 Ctrl+C 退出。")
-		fmt.Scanln()
-	}
+	// Windows 下双击运行时，测速完毕后保持窗口不关闭
+	fmt.Printf("按下 回车键 或 Ctrl+C 退出。")
+	fmt.Scanln()
 }
 
 // 检查更新

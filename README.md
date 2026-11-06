@@ -1,4 +1,4 @@
-# CFSTXX
+# CFSTX
 
 > **本项目基于 [XIU2/CloudflareSpeedTest](https://github.com/XIU2/CloudflareSpeedTest) 二次开发**，遵循 GPL-3.0 许可证。感谢原作者 [XIU2](https://github.com/XIU2) 的开源工作。
 
@@ -27,43 +27,8 @@
 1. 下载编译好的可执行文件（ [Gitee Releases](https://gitee.com/liliaic/cfstx/releases) ）并解压。  
 2. 双击运行 `cfstx.exe` 文件（Windows 系统），等待测速完成...
 
-<details>
-<summary><code><strong>「 点击查看 Linux / MAC 系统下的使用示例 」</strong></code></summary>
-
-****
-
-以下命令仅为示例，版本号和文件名请前往 [**Releases**](https://gitee.com/liliaic/cfstx/releases) 查看。
-
-> MAC 下 CFSTX 的安装和使用方式是一样的，不过 MAC 可以通过其他方式来下载解压（也就是可以跳过下面的前几个步骤），但运行的话还是需要在终端中运行（注意别忘了 **赋予执行权限**）。
-
-``` yaml
-# 如果是第一次使用，则建议创建新文件夹（后续更新时，跳过该步骤）
-mkdir cfstx
-
-# 进入文件夹（后续更新，只需要从这里重复下面的下载、解压命令即可）
-cd cfstx
-
-# 下载 CFSTX 压缩包（请将下方 v1.0.0 替换为实际发布版本号，可前往 Releases 页面查看）
-wget -N https://gitee.com/liliaic/cfstx/releases/download/v1.0.0/cfstx_linux_amd64.tar.gz
-# 如果下载失败的话，尝试删除 -N 参数（如果是为了更新，则记得提前删除旧压缩包 rm cfstx_linux_amd64.tar.gz ）
-
-# 解压（不需要删除旧文件，会直接覆盖，自行根据需求替换 文件名）
-tar -zxf cfstx_linux_amd64.tar.gz
-
-# 赋予执行权限
-chmod +x cfstx
-
-# 运行（不带参数）
-./cfstx
-
-# 运行（带参数示例）
-./cfstx -tl 200 -dn 20
-```
-
 > 如果平**均延迟非常低**（如 0.xx），则说明 CFSTX **测速时走了代理**，请先关闭代理软件后再测速。  
 > 如果在**路由器**上运行，建议先关闭路由器内的代理（或将其排除），否则测速结果可能会**不准确/无法使用**。
-
-</details>
 
 ****
 
@@ -212,7 +177,7 @@ https://gitee.com/liliaic/cfstx
 > 该示例把常用参数都给加上了，即为：`-tll 40 -tl 150 -sl 1 -dn 5`，最后输出结果如下：
 
 ```python
-# XIU2/CFSTX vX.X.X
+# CFSTX vX.X.X
 
 开始延迟测速（模式：TCP, 端口：443, 范围：40 ~ 150 ms, 丢包：1.00)
 321 / 321 [-----------------------------------------------------------] 可用: 30
@@ -282,8 +247,7 @@ Windows 要指定参数需要在 CMD 中运行，或者把参数添加到快捷�
 
 > [!TIP]
 > - 各参数均有**默认值**，当使用默认值时参数可以省略（**按需选择**），参数**不分前后顺序**。  
-> - Windows **PowerShell** 只需把下面命令中的 `cfstx` 改为 `.\cfstx` 即可。  
-> - Linux / macOS 系统只需要把下面命令中的 `cfstx` 改为 `./cfstx` 即可。
+> - Windows **PowerShell** 只需把下面命令中的 `cfstx` 改为 `.\cfstx` 即可。
 
 ****
 
@@ -473,26 +437,14 @@ cfstx -f 3.txt -o result.txt -dd
 
 
 # 指定 IPv4 数据文件 及 输出结果到文件（相对路径，即当前目录内的 abc 文件夹下，如含空格请加上引号）
-# Linux（CFSTX 程序所在目录内的 abc 文件夹下）
-./cfstx -f abc/3.txt -o abc/result.txt -dd
-
-# Windows（注意是反斜杠）
 cfstx -f abc\3.txt -o abc\result.txt -dd
 
 
 # 指定 IPv4 数据文件 及 输出结果到文件（绝对路径，即 C:\abc\ 目录下，如含空格请加上引号）
-# Linux（/abc/ 目录下）
-./cfstx -f /abc/4.txt -o /abc/result.csv -dd
-
-# Windows（注意是反斜杠）
 cfstx -f C:\abc\4.txt -o C:\abc\result.csv -dd
 
 
 # 如果要以【绝对路径】运行 CFSTX，那么 -f / -o 参数中的文件名也必须是【绝对路径】，否则会报错找不到文件！
-# Linux（/abc/ 目录下）
-/abc/cfstx -f /abc/4.txt -o /abc/result.csv -dd
-
-# Windows（注意是反斜杠）
 C:\abc\cfstx -f C:\abc\4.txt -o C:\abc\result.csv -dd
 ```
 </details>
@@ -670,11 +622,7 @@ cfstx -tl 200 -sl 5.6 -dn 10
 直接通过参数指定要测速的 IP 段数据。
 ``` bash
 # 先进入 CFSTX 所在目录，然后运行：
-# Windows 系统（在 CMD 中运行）
 cfstx -ip 1.1.1.1,2.2.2.2/24,2606:4700::/32
-
-# Linux 系统
-./cfstx -ip 1.1.1.1,2.2.2.2/24,2606:4700::/32
 ```
 
 ****
@@ -697,11 +645,7 @@ cfstx -ip 1.1.1.1,2.2.2.2/24,2606:4700::/32
 
 ``` bash
 # 先进入 CFSTX 所在目录，然后运行：
-# Windows 系统（在 CMD 中运行）
 cfstx -f 1.txt
-
-# Linux 系统
-./cfstx -f 1.txt
 
 # 对于 1.0.0.1/24 这样的 IP 段只会随机最后一段（1.0.0.1~255），如果要测速该 IP 段中的所有 IP，请加上 -allip 参数。
 ```
@@ -747,7 +691,7 @@ cfstx -f 1.txt
 6. `... tls: failed to verify certificate: x509: certificate has expired or is not yet valid: current time ...`  
 这种是 **SSL 证书过期了或者尚未到有效时间**，除了这个原因外，也可能是和上面 4、5 的原因一样（这 4、5、6 三种报错可能会同时出现在同一个服务器 IP 上）
 7. `... tls: failed to verify certificate: x509: certificate signed by unknown authority.`  
-这种代表**系统证书配置有问题**，导致 TLS 握手时无法验证证书，目前只在 Termux 内遇到过（解决方法见：https://github.com/XIU2/CloudflareSpeedTest/discussions/61 帖子末尾）
+这种代表**系统证书配置有问题**，导致 TLS 握手时无法验证证书（可参考：https://github.com/XIU2/CloudflareSpeedTest/discussions/61）
 
 > 如果你遇到了其他报错原因，且翻译后还是不懂，可以发 Issues 或 Discussions 询问，我也会更新到这里。  
 > 但注意，发 Issues 或 Discussions 询问时，请记得带上**调试模式下 CFSTX 输出的完整内容（或者完整截图）**。
@@ -796,7 +740,7 @@ cfstx -f 1.txt
 
 考虑到很多人获得最快 Cloudflare CDN IP 后，需要替换 Hosts 文件中的 IP。
 
-可以看这个 [**Issues**](https://github.com/XIU2/CloudflareSpeedTest/discussions/312) 获取 **Windows/Linux 自动更新 Hosts 脚本**！
+可以看这个 [**Issues**](https://github.com/XIU2/CloudflareSpeedTest/discussions/312) 获取 **Windows 自动更新 Hosts 脚本**！
 
 ****
 
@@ -857,30 +801,17 @@ _**English language version of CFSTX (Text language differences only) [#64](http
 
 为了方便，我是在编译的时候将版本号写入代码中的 version 变量，因此你手动编译时，需要像下面这样在 `go build` 命令后面加上 `-ldflags` 参数来指定版本号：
 
-```bash
+```bat
 go build -ldflags "-s -w -X main.version=v1.0.0"
-# 在 CFSTX 目录中通过命令行（例如 CMD、Bat 脚本）运行该命令，即可编译一个可在和当前设备同样系统、位数、架构的环境下运行的二进制程序（Go 会自动检测你的系统位数、架构）且版本号为 v1.0.0
+# 在 CFSTX 目录中通过命令行（例如 CMD、Bat 脚本）运行该命令，即可编译一个在当前 Windows 系统运行的二进制程序且版本号为 v1.0.0
 ```
 
-如果想要在 Windows 64位系统下编译**其他系统、架构、位数**，那么需要指定 **GOOS** 和 **GOARCH** 变量。
-
-例如在 Windows 系统下编译一个适用于 **Linux 系统 amd 架构 64 位**的二进制程序：
+如需要编译 32 位版本，可通过 **GOARCH** 变量指定：
 
 ```bat
-SET GOOS=linux
-SET GOARCH=amd64
+SET GOARCH=386
 go build -ldflags "-s -w -X main.version=v1.0.0"
 ```
-
-例如在 Linux 系统下编译一个适用于 **Windows 系统 amd 架构 32 位**的二进制程序：
-
-```bash
-GOOS=windows
-GOARCH=386
-go build -ldflags "-s -w -X main.version=v1.0.0"
-```
-
-> 可以运行 `go tool dist list` 来查看当前 Go 版本支持编译哪些组合。
 
 ****
 
@@ -890,17 +821,8 @@ go build -ldflags "-s -w -X main.version=v1.0.0"
 ```bat
 :: Windows 系统下是这样：
 SET version=v1.0.0
-SET GOOS=linux
 SET GOARCH=amd64
-go build -o Releases\cfstx_linux_amd64\cfstx -ldflags "-s -w -X main.version=%version%"
-```
-
-```bash
-# Linux 系统下是这样：
-version=v1.0.0
-GOOS=windows
-GOARCH=386
-go build -o Releases/cfstx_windows_386/cfstx.exe -ldflags "-s -w -X main.version=${version}"
+go build -o Releases\cfstx_windows_amd64\cfstx.exe -ldflags "-s -w -X main.version=%version%"
 ```
 
 </details>
