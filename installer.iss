@@ -29,10 +29,12 @@ Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
+; 安装程序自身与卸载项的图标
+SetupIconFile=assets\cfstx.ico
+UninstallDisplayIcon={app}\{#MyAppExeName}
 ; 覆盖安装时自动关闭正在运行的旧版本，安装完成后重新启动
 CloseApplications=yes
 RestartApplications=yes
-UninstallDisplayIcon={app}\{#MyAppExeName}
 MinVersion=10.0
 
 [Languages]
@@ -50,9 +52,9 @@ Source: "version.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "script\*"; DestDir: "{app}\script"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{group}\卸载 {#MyAppName}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"
+Name: "{group}\卸载 {#MyAppName}"; Filename: "{uninstallexe}"; IconFilename: "{app}\{#MyAppExeName}"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon; IconFilename: "{app}\{#MyAppExeName}"
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "运行 {#MyAppName}"; Flags: nowait postinstall skipifsilent

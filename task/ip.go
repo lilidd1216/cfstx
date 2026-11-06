@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -19,7 +20,29 @@ var (
 	// IPFile is the filename of IP Rangs
 	IPFile = defaultInputFile
 	IPText string
+
+	// SourceIPv4 是否加载内置 ip.txt
+	SourceIPv4 = true
+	// SourceIPv6 是否加载内置 ipv6.txt
+	SourceIPv6 = false
+	// ExtraTargets 由上层注入的额外测速目标（在线优选 IP 等）
+	ExtraTargets []*Target
 )
+
+// Target 表示一个待测速目标。每条目标自带端口，
+// 因此同一个 IP 的不同端口列表可以共存，也能与内置 IP 段混用。
+type Target struct {
+	IP   *net.IPAddr
+	Port int
+}
+
+// Addr 返回 host:port 形式的拨号地址，IPv6 会自动加上方括号。
+func (t *Target) Addr() string {
+	if t == nil || t.IP == nil {
+		return ""
+	}
+	return net.JoinHostPort(t.IP.String(), strconv.Itoa(t.Port))
+}
 
 func InitRandSeed() {
 	rand.Seed(time.Now().UnixNano())
@@ -36,16 +59,70 @@ func randIPEndWith(num byte) byte {
 	return byte(rand.Intn(int(num)))
 }
 
+// SplitHostPort 从一行文本中分离出 IP/CIDR 与端口。
+// 支持的写法：
+//
+//	1.2.3.4          1.2.3.4:8443          1.2.3.4:8443#备注
+//	1.2.3.4/24       2606:4700::1          [2606:4700::1]:8443#备注
+//
+// 没有显式端口时返回 defaultPort。
+func SplitHostPort(line string, defaultPort int) (host string, port int) {
+	port = defaultPort
+
+	// # 之后是备注，直接丢弃（在线列表常见 113.1.1.1:443#香港 HK）
+	if i := strings.IndexByte(line, '#'); i >= 0 {
+		line = line[:i]
+	}
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return "", port
+	}
+
+	// IPv6 带方括号：[addr]:port
+	if strings.HasPrefix(line, "[") {
+		end := strings.IndexByte(line, ']')
+		if end < 0 {
+			return "", port
+		}
+		host = line[1:end]
+		if rest := strings.TrimSpace(line[end+1:]); strings.HasPrefix(rest, ":") {
+			if p, err := strconv.Atoi(rest[1:]); err == nil && p > 0 && p <= 65535 {
+				port = p
+			}
+		}
+		return host, port
+	}
+
+	// 原生 IPv6（多个冒号且不是 CIDR 前缀）不含端口
+	if strings.Count(line, ":") > 1 && !strings.Contains(line, "/") {
+		return line, port
+	}
+
+	// IPv4 或 IPv4:port
+	if i := strings.LastIndexByte(line, ':'); i > 0 {
+		if p, err := strconv.Atoi(line[i+1:]); err == nil && p > 0 && p <= 65535 {
+			return line[:i], p
+		}
+	}
+	return line, port
+}
+
 type IPRanges struct {
-	ips     []*net.IPAddr
+	ips     []*Target
 	mask    string
 	firstIP net.IP
 	ipNet   *net.IPNet
+	port    int
 }
 
 func newIPRanges() *IPRanges {
+	port := TCPPort
+	if port <= 0 || port > 65535 {
+		port = defaultPort
+	}
 	return &IPRanges{
-		ips: make([]*net.IPAddr, 0),
+		ips:  make([]*Target, 0),
+		port: port,
 	}
 }
 
@@ -65,12 +142,14 @@ func (r *IPRanges) fixIP(ip string) string {
 	return ip
 }
 
-// 解析 IP 段，获得 IP、IP 范围、子网掩码
-func (r *IPRanges) parseCIDR(ip string) {
+// 解析 IP 段，获得 IP、IP 范围、子网掩码。
+// 解析失败只返回 false，不再终止进程——在线列表里可能混入脏数据。
+func (r *IPRanges) parseCIDR(ip string) bool {
 	var err error
 	if r.firstIP, r.ipNet, err = net.ParseCIDR(r.fixIP(ip)); err != nil {
-		log.Fatalln("ParseCIDR err", err)
+		return false
 	}
+	return true
 }
 
 func (r *IPRanges) appendIPv4(d byte) {
@@ -78,7 +157,11 @@ func (r *IPRanges) appendIPv4(d byte) {
 }
 
 func (r *IPRanges) appendIP(ip net.IP) {
-	r.ips = append(r.ips, &net.IPAddr{IP: ip})
+	port := r.port
+	if port <= 0 || port > 65535 {
+		port = defaultPort
+	}
+	r.ips = append(r.ips, &Target{IP: &net.IPAddr{IP: ip}, Port: port})
 }
 
 // 返回第四段 ip 的最小值及可用数目
@@ -147,44 +230,133 @@ func (r *IPRanges) chooseIPv6() {
 	}
 }
 
-func loadIPRanges() []*net.IPAddr {
+// addLine 解析一行 IP 并展开为测速目标。
+func (r *IPRanges) addLine(line string, defaultPort int) {
+	host, port := SplitHostPort(line, defaultPort)
+	if host == "" {
+		return
+	}
+	if port <= 0 || port > 65535 {
+		port = defaultPort
+	}
+	r.port = port
+	if !r.parseCIDR(host) {
+		return
+	}
+	if isIPv4(host) {
+		r.chooseIPv4()
+	} else {
+		r.chooseIPv6()
+	}
+}
+
+// ResolveDataPath 把数据文件名解析成实际路径。
+//
+// GUI 可能从任意工作目录启动（双击、快捷方式、命令行），而 ip.txt 等
+// 数据文件总是和 exe 放在一起，所以这里按「当前目录 → exe 目录」的顺序查找。
+func ResolveDataPath(name string) string {
+	if name == "" || filepath.IsAbs(name) {
+		return name
+	}
+	if _, err := os.Stat(name); err == nil {
+		return name
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return name
+	}
+	candidate := filepath.Join(filepath.Dir(exe), name)
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate
+	}
+	return name
+}
+
+// loadFile 读取一个 IP 列表文件。文件缺失只记录日志，不中断测速。
+func (r *IPRanges) loadFile(name string) {
+	path := ResolveDataPath(name)
+	file, err := os.Open(path)
+	if err != nil {
+		log.Printf("读取 IP 文件 %s 失败：%v", path, err)
+		return
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
+			continue
+		}
+		r.addLine(line, TCPPort)
+	}
+}
+
+func (r *IPRanges) appendTarget(t *Target) {
+	if t == nil || t.IP == nil {
+		return
+	}
+	port := t.Port
+	if port <= 0 || port > 65535 {
+		port = TCPPort
+	}
+	if port <= 0 || port > 65535 {
+		port = defaultPort
+	}
+	r.ips = append(r.ips, &Target{IP: t.IP, Port: port})
+}
+
+// dedupeTargets 按 IP 去重，保留先出现的端口（ip.txt/ipv6.txt 在前，
+// 因此同一 IP 优先使用内置列表的默认端口）。
+func dedupeTargets(targets []*Target) []*Target {
+	seen := make(map[string]struct{}, len(targets))
+	out := make([]*Target, 0, len(targets))
+	for _, t := range targets {
+		if t == nil || t.IP == nil {
+			continue
+		}
+		key := t.IP.String()
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, t)
+	}
+	return out
+}
+
+// LoadTargets 汇总所有启用的 IP 来源并去重。
+func LoadTargets() []*Target {
 	ranges := newIPRanges()
-	if IPText != "" { // 从参数中获取 IP 段数据
-		IPs := strings.Split(IPText, ",") // 以逗号分隔为数组并循环遍历
-		for _, IP := range IPs {
-			IP = strings.TrimSpace(IP) // 去除首尾的空白字符（空格、制表符、换行符等）
-			if IP == "" {              // 跳过空的（即开头、结尾或连续多个 ,, 的情况）
+
+	// 手动指定的 IP 段（只解析、不随机化 CIDR 之外的来源）
+	if IPText != "" {
+		for _, part := range strings.Split(IPText, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
 				continue
 			}
-			ranges.parseCIDR(IP) // 解析 IP 段，获得 IP、IP 范围、子网掩码
-			if isIPv4(IP) {      // 生成要测速的所有 IPv4 / IPv6 地址（单个/随机/全部）
-				ranges.chooseIPv4()
-			} else {
-				ranges.chooseIPv6()
-			}
-		}
-	} else { // 从文件中获取 IP 段数据
-		if IPFile == "" {
-			IPFile = defaultInputFile
-		}
-		file, err := os.Open(IPFile)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer file.Close()
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() { // 循环遍历文件每一行
-			line := strings.TrimSpace(scanner.Text()) // 去除首尾的空白字符（空格、制表符、换行符等）
-			if line == "" {                           // 跳过空行
-				continue
-			}
-			ranges.parseCIDR(line) // 解析 IP 段，获得 IP、IP 范围、子网掩码
-			if isIPv4(line) {      // 生成要测速的所有 IPv4 / IPv6 地址（单个/随机/全部）
-				ranges.chooseIPv4()
-			} else {
-				ranges.chooseIPv6()
-			}
+			ranges.addLine(part, TCPPort)
 		}
 	}
-	return ranges.ips
+
+	// 内置文件
+	if SourceIPv4 {
+		ranges.loadFile(defaultInputFile)
+	}
+	if SourceIPv6 {
+		ranges.loadFile("ipv6.txt")
+	}
+
+	// 上层注入（在线优选 IP）
+	for _, t := range ExtraTargets {
+		ranges.appendTarget(t)
+	}
+
+	return dedupeTargets(ranges.ips)
+}
+
+// loadIPRanges 保留给内部调用。
+func loadIPRanges() []*Target {
+	return LoadTargets()
 }

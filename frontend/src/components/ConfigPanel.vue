@@ -5,9 +5,20 @@ const config = defineModel('config', { type: Object, required: true })
 const props = defineProps({
   running: { type: Boolean, default: false },
 })
-const emit = defineEmits(['pick-ip-file'])
+const emit = defineEmits(['pick-ip-file', 'open-bestcf', 'open-cmliu'])
 
 const disabled = computed(() => props.running)
+
+// 可多选的 IP 来源；ip.txt 始终启用，由界面上固定勾选的只读项表示
+const sources = computed({
+  get: () => config.value.sources || [],
+  set: (val) => {
+    config.value.sources = val
+  },
+})
+
+const manualEnabled = computed(() => sources.value.includes('manual'))
+const customEnabled = computed(() => sources.value.includes('custom'))
 </script>
 
 <template>
@@ -231,49 +242,183 @@ const disabled = computed(() => props.running)
       <div class="section-head">
         <v-icon size="18" color="primary">mdi-server-network</v-icon>
         <span class="section-title">IP 来源</span>
-        <span class="section-desc">指定要测速的 IP 段</span>
+        <span class="section-desc">可多选，开始测速时合并并按 IP 去重</span>
       </div>
 
-      <v-row dense>
-        <v-col cols="12" sm="6" md="5">
-          <v-select
-            v-model="config.ipFile"
-            :items="[
-              { title: 'ip.txt（IPv4 默认）', value: 'ip.txt' },
-              { title: 'ipv6.txt（IPv6）', value: 'ipv6.txt' },
-            ]"
-            label="IP 数据文件"
-            :disabled="disabled"
+      <div class="source-list">
+        <!-- 内置 ip.txt：强制勾选，不可取消 -->
+        <div class="source-item locked">
+          <v-checkbox
+            :model-value="true"
+            :disabled="true"
             density="compact"
+            hide-details
+            color="primary"
+            class="source-check"
           />
-          <div class="hint">程序目录下的内置 IP 列表，也可点击右侧选择其他文件。</div>
-        </v-col>
-
-        <v-col cols="12" sm="6" md="2" class="pt-1">
+          <div class="source-body">
+            <div class="source-title">
+              内置 ip.txt
+              <v-chip size="x-small" color="primary" variant="flat" class="ml-2">必选</v-chip>
+            </div>
+            <div class="hint">
+              {{ config.ipFile || 'ip.txt' }} · IPv4 列表，支持 IP、IP 段（CIDR）和 IP:端口。
+            </div>
+          </div>
           <v-btn
+            size="small"
             variant="tonal"
-            size="default"
             prepend-icon="mdi-folder-search-outline"
             :disabled="disabled"
-            block
-            height="40"
             @click="emit('pick-ip-file')"
           >
-            选择文件
+            更换文件
           </v-btn>
-        </v-col>
+        </div>
 
-        <v-col cols="12" md="5">
-          <v-text-field
-            v-model="config.ipText"
-            label="手动指定 IP 段"
-            placeholder="1.1.1.1,2.2.2.2/24"
+        <!-- 内置 ipv6.txt -->
+        <div class="source-item">
+          <v-checkbox
+            v-model="sources"
+            value="ipv6"
             :disabled="disabled"
             density="compact"
+            hide-details
+            color="primary"
+            class="source-check"
           />
-          <div class="hint">直接输入 IP 或网段，英文逗号分隔；填写后优先于上面的文件。</div>
-        </v-col>
-      </v-row>
+          <div class="source-body">
+            <div class="source-title">内置 ipv6.txt</div>
+            <div class="hint">IPv6 地址列表。需要测速地址支持 IPv6，否则结果会很少。</div>
+          </div>
+        </div>
+
+        <!-- 在线优选 IP -->
+        <div class="source-item">
+          <v-checkbox
+            v-model="sources"
+            value="bestcf"
+            :disabled="disabled"
+            density="compact"
+            hide-details
+            color="primary"
+            class="source-check"
+          />
+          <div class="source-body">
+            <div class="source-title">
+              优选IP BestIP
+              <a class="source-link" href="#" @click.prevent="emit('open-bestcf')">bestcf.pages.dev</a>
+            </div>
+            <div class="hint">
+              每次开始测速前，在线抓取该站点「优选IP BestIP」区块下全部非 GitHub 链接，
+              提取其中的 IP 与端口，按 IP 去重后与其他来源合并。同一 IP 出现多次时优先保留 443 等标准端口。
+            </div>
+          </div>
+        </div>
+
+        <!-- Cloudflare 官方 IP 段 -->
+        <div class="source-item">
+          <v-checkbox
+            v-model="sources"
+            value="official"
+            :disabled="disabled"
+            density="compact"
+            hide-details
+            color="primary"
+            class="source-check"
+          />
+          <div class="source-body">
+            <div class="source-title">
+              Cloudflare 官方 IP 段
+              <span class="source-badge">api.cloudflare.com</span>
+            </div>
+            <div class="hint">
+              官方实时发布的权威网段清单，最稳定。每段按 /24 各随机取一个 IP 参与测速。
+            </div>
+          </div>
+        </div>
+
+        <!-- cmliu CF-CIDR -->
+        <div class="source-item">
+          <v-checkbox
+            v-model="sources"
+            value="cmliu"
+            :disabled="disabled"
+            density="compact"
+            hide-details
+            color="primary"
+            class="source-check"
+          />
+          <div class="source-body">
+            <div class="source-title">
+              cmliu CF-CIDR
+              <a class="source-link" href="#" @click.prevent="emit('open-cmliu')">GitHub</a>
+            </div>
+            <div class="hint">
+              社区长期维护的 Cloudflare 网段列表，覆盖面通常比官方 API 更广。
+            </div>
+          </div>
+        </div>
+
+        <!-- 自定义在线源 -->
+        <div class="source-item">
+          <v-checkbox
+            v-model="sources"
+            value="custom"
+            :disabled="disabled"
+            density="compact"
+            hide-details
+            color="primary"
+            class="source-check"
+          />
+          <div class="source-body">
+            <div class="source-title">自定义 IP 源</div>
+            <v-textarea
+              v-model="config.customSources"
+              placeholder="https://example.com/ip.txt&#10;https://another.site/list.txt"
+              :disabled="disabled || !customEnabled"
+              density="compact"
+              hide-details
+              rows="2"
+              auto-grow
+              class="source-textarea mt-2 mb-1"
+            />
+            <div class="hint">
+              每行一个 URL，与最佳 IP 一起抓取合并。支持 <code>IP:端口</code>、纯 IP、<code>域名:端口</code>；
+              列表里的域名会通过 DoH 自动解析成 IP。
+            </div>
+          </div>
+        </div>
+
+        <!-- 手动指定 -->
+        <div class="source-item">
+          <v-checkbox
+            v-model="sources"
+            value="manual"
+            :disabled="disabled"
+            density="compact"
+            hide-details
+            color="primary"
+            class="source-check"
+          />
+          <div class="source-body">
+            <div class="source-title">手动指定 IP 段</div>
+            <v-text-field
+              v-model="config.ipText"
+              placeholder="1.1.1.1,2.2.2.2/24,1.1.1.1:8443"
+              :disabled="disabled || !manualEnabled"
+              density="compact"
+              hide-details
+              class="mt-2 mb-1"
+            />
+            <div class="hint">英文逗号分隔，支持 IP、IP 段和 IP:端口。</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="hint source-foot">
+        合并后按 IP 去重；同一 IP 出现多个端口时，优先保留先加载来源的端口（内置列表默认使用上方「端口」设置）。
+      </div>
     </v-card>
 
     <!-- 高级 -->
@@ -385,5 +530,86 @@ const disabled = computed(() => props.running)
   font-size: 14px;
   color: #d4d4d8;
   margin-bottom: 2px;
+}
+
+/* IP 来源勾选列表 */
+.source-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.source-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #26262e;
+  background: #17171c;
+}
+
+.source-item.locked {
+  border-color: #2f3d68;
+  background: linear-gradient(90deg, rgba(79, 106, 205, 0.10), transparent 70%);
+}
+
+.source-check {
+  flex: 0 0 auto;
+  margin-top: -2px;
+}
+
+.source-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.source-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 14px;
+  color: #d4d4d8;
+  margin-bottom: 2px;
+}
+
+.source-item .hint {
+  min-height: 0;
+  margin: 0;
+}
+
+.source-link {
+  font-size: 12px;
+  color: #7c9cff;
+  text-decoration: none;
+}
+
+.source-link:hover {
+  text-decoration: underline;
+}
+
+.source-foot {
+  min-height: 0;
+  margin: 12px 0 0;
+}
+
+.source-textarea :deep(textarea) {
+  font-family: 'Cascadia Mono', 'Consolas', monospace;
+  font-size: 12px;
+}
+
+.source-badge {
+  font-size: 11px;
+  color: #8b8b96;
+  font-family: 'Cascadia Mono', 'Consolas', monospace;
+}
+
+.source-body code {
+  background: #26262e;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+  color: #a5b4fc;
 }
 </style>

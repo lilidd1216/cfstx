@@ -4,8 +4,6 @@ import (
 	//"crypto/tls"
 
 	"io"
-	"log"
-	"net"
 	"net/http"
 	"regexp"
 	"strings"
@@ -26,11 +24,12 @@ var (
 )
 
 // pingReceived pingTotalTime
-func (p *Ping) httping(ip *net.IPAddr) (int, time.Duration, string) {
+func (p *Ping) httping(t *Target) (int, time.Duration, string) {
+	pingURL := HttpingURL()
 	hc := http.Client{
 		Timeout: time.Second * 2,
 		Transport: &http.Transport{
-			DialContext: getDialContext(ip),
+			DialContext: getDialContext(t),
 			//TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // 跳过证书验证
 		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -42,10 +41,10 @@ func (p *Ping) httping(ip *net.IPAddr) (int, time.Duration, string) {
 	// 先访问一次获得 HTTP 状态码 及 地区码
 	var colo string
 	{
-		request, err := http.NewRequest(http.MethodHead, URL, nil)
+		request, err := http.NewRequest(http.MethodHead, pingURL, nil)
 		if err != nil {
 			if utils.Debug { // 调试模式下，输出更多信息
-				utils.Red.Printf("[调试] IP: %s, 延迟测速请求创建失败，错误信息: %v, 测速地址: %s\n", ip.String(), err, URL)
+				utils.Red.Printf("[调试] IP: %s, 延迟测速请求创建失败，错误信息: %v, 测速地址: %s\n", t.Addr(), err, pingURL)
 			}
 			return 0, 0, ""
 		}
@@ -53,7 +52,7 @@ func (p *Ping) httping(ip *net.IPAddr) (int, time.Duration, string) {
 		response, err := hc.Do(request)
 		if err != nil {
 			if utils.Debug { // 调试模式下，输出更多信息
-				utils.Red.Printf("[调试] IP: %s, 延迟测速失败，错误信息: %v, 测速地址: %s\n", ip.String(), err, URL)
+				utils.Red.Printf("[调试] IP: %s, 延迟测速失败，错误信息: %v, 测速地址: %s\n", t.Addr(), err, pingURL)
 			}
 			return 0, 0, ""
 		}
@@ -61,17 +60,17 @@ func (p *Ping) httping(ip *net.IPAddr) (int, time.Duration, string) {
 
 		//fmt.Println("IP:", ip, "StatusCode:", response.StatusCode, response.Request.URL)
 		// 如果未指定的 HTTP 状态码，或指定的状态码不合规，则默认只认为 200、301、302 才算 HTTPing 通过
-		if HttpingStatusCode == 0 ||  HttpingStatusCode < 100 || HttpingStatusCode > 599 {
+		if HttpingStatusCode == 0 || HttpingStatusCode < 100 || HttpingStatusCode > 599 {
 			if response.StatusCode != 200 && response.StatusCode != 301 && response.StatusCode != 302 {
 				if utils.Debug { // 调试模式下，输出更多信息
-					utils.Red.Printf("[调试] IP: %s, 延迟测速终止，HTTP 状态码: %d, 测速地址: %s\n", ip.String(), response.StatusCode, URL)
+					utils.Red.Printf("[调试] IP: %s, 延迟测速终止，HTTP 状态码: %d, 测速地址: %s\n", t.Addr(), response.StatusCode, pingURL)
 				}
 				return 0, 0, ""
 			}
 		} else {
 			if response.StatusCode != HttpingStatusCode {
 				if utils.Debug { // 调试模式下，输出更多信息
-					utils.Red.Printf("[调试] IP: %s, 延迟测速终止，HTTP 状态码: %d, 指定的 HTTP 状态码 %d, 测速地址: %s\n", ip.String(), response.StatusCode, HttpingStatusCode, URL)
+					utils.Red.Printf("[调试] IP: %s, 延迟测速终止，HTTP 状态码: %d, 指定的 HTTP 状态码 %d, 测速地址: %s\n", t.Addr(), response.StatusCode, HttpingStatusCode, pingURL)
 				}
 				return 0, 0, ""
 			}
@@ -88,7 +87,7 @@ func (p *Ping) httping(ip *net.IPAddr) (int, time.Duration, string) {
 			colo = p.filterColo(colo)
 			if colo == "" { // 没有匹配到地区码或不符合指定地区则直接结束该 IP 测试
 				if utils.Debug { // 调试模式下，输出更多信息
-					utils.Red.Printf("[调试] IP: %s, 地区码不匹配: %s\n", ip.String(), colo)
+					utils.Red.Printf("[调试] IP: %s, 地区码不匹配: %s\n", t.Addr(), colo)
 				}
 				return 0, 0, ""
 			}
@@ -99,10 +98,9 @@ func (p *Ping) httping(ip *net.IPAddr) (int, time.Duration, string) {
 	success := 0
 	var delay time.Duration
 	for i := 0; i < PingTimes; i++ {
-		request, err := http.NewRequest(http.MethodHead, URL, nil)
+		request, err := http.NewRequest(http.MethodHead, pingURL, nil)
 		if err != nil {
-			log.Fatal("意外的错误，情报告：", err)
-			return 0, 0, ""
+			continue
 		}
 		request.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.80 Safari/537.36")
 		if i == PingTimes-1 {

@@ -10,8 +10,10 @@ const config = ref({
   threads: 200,
   pingTimes: 4,
   port: 443,
+  sources: ['ipv4'],
   ipFile: 'ip.txt',
   ipText: '',
+  customSources: '',
   httping: true,
   httpingCode: 0,
   colo: '',
@@ -23,15 +25,15 @@ const config = ref({
   testCount: 10,
   disableDownload: false,
   testAll: false,
-  url: 'https://cf.xiu2.xyz/url',
+  url: 'https://speed.cloudflare.com/__down?bytes=1000000000',
   outputFile: 'result.csv',
   printNum: 10,
   debug: false,
 })
 
 const running = ref(false)
-const phase = ref('idle') // idle | ping | download | done
-const progress = ref({ current: 0, total: 0, available: 0, ip: '', speed: 0 })
+const phase = ref('idle') // idle | fetch | ping | download | done
+const progress = ref({ current: 0, total: 0, available: 0, ip: '', port: 0, speed: 0, msg: '' })
 const results = ref([])
 const history = ref([])
 const historyOpen = ref(false)
@@ -115,6 +117,7 @@ const displayResults = computed(() => {
 
 const phaseLabel = computed(() => {
   switch (phase.value) {
+    case 'fetch': return '获取在线 IP 中'
     case 'ping': return '延迟测速中'
     case 'download': return '下载测速中'
     case 'done': return '测速完成'
@@ -124,6 +127,7 @@ const phaseLabel = computed(() => {
 
 const phaseColor = computed(() => {
   switch (phase.value) {
+    case 'fetch': return 'info'
     case 'ping': return 'primary'
     case 'download': return 'secondary'
     case 'done': return 'success'
@@ -190,7 +194,7 @@ async function start() {
   running.value = true
   results.value = []
   phase.value = 'ping'
-  progress.value = { current: 0, total: 0, available: 0, ip: '', speed: 0 }
+  progress.value = { current: 0, total: 0, available: 0, ip: '', port: 0, speed: 0, msg: '' }
   startTimer()
   try {
     await httpPost('/api/test/start', config.value)
@@ -214,6 +218,15 @@ async function stop() {
 async function exportCsv() {
   try {
     const res = await httpPost('/api/export')
+    toast('已导出到 ' + res.path, 'success')
+  } catch (e) {
+    toast(String(e), 'error')
+  }
+}
+
+async function exportTxt() {
+  try {
+    const res = await httpPost('/api/export/txt')
     toast('已导出到 ' + res.path, 'success')
   } catch (e) {
     toast(String(e), 'error')
@@ -254,6 +267,14 @@ async function clearHistory() {
 
 function openRepo() {
   httpPost('/api/open-url', { url: 'https://gitee.com/liliaic/cfstx' }).catch(() => {})
+}
+
+function openBestCF() {
+  httpPost('/api/open-url', { url: 'https://bestcf.pages.dev/' }).catch(() => {})
+}
+
+function openCmliu() {
+  httpPost('/api/open-url', { url: 'https://github.com/cmliu/cmliu' }).catch(() => {})
 }
 
 // ---------------------------------------------------------------------------
@@ -330,14 +351,27 @@ function handleEvent(event, data) {
       break
 
     case 'test:progress':
-      if (data.stage === 'ping') {
+      if (data.stage === 'fetch') {
+        phase.value = 'fetch'
+        progress.value = {
+          current: data.current,
+          total: data.total,
+          available: 0,
+          ip: '',
+          port: 0,
+          speed: 0,
+          msg: data.msg || '',
+        }
+      } else if (data.stage === 'ping') {
         phase.value = 'ping'
         progress.value = {
           current: data.current,
           total: data.total,
           available: data.available,
           ip: '',
+          port: 0,
           speed: 0,
+          msg: '',
         }
       } else {
         phase.value = 'download'
@@ -346,9 +380,16 @@ function handleEvent(event, data) {
           total: data.total,
           available: progress.value.available,
           ip: data.ip,
+          port: data.port || 0,
           speed: data.speed || 0,
+          msg: '',
         }
       }
+      break
+
+    case 'test:result':
+      // 每测完一个达标的 IP 就插入列表，按速度降序保持有序
+      results.value = [...results.value, data].sort((a, b) => b.speed - a.speed)
       break
 
     case 'test:phase':
@@ -514,6 +555,11 @@ onBeforeUnmount(() => {
               <div class="status-value mono">{{ elapsed }} s</div>
             </div>
 
+            <div v-if="phase === 'fetch'" class="status-block wide">
+              <div class="status-label">正在抓取</div>
+              <div class="status-value mono text-truncate">{{ progress.msg || 'bestcf.pages.dev' }}</div>
+            </div>
+
             <div v-if="phase === 'ping'" class="status-block">
               <div class="status-label">可用 IP</div>
               <div class="status-value mono text-success">{{ progress.available }}</div>
@@ -521,7 +567,9 @@ onBeforeUnmount(() => {
 
             <div v-if="phase === 'download'" class="status-block wide">
               <div class="status-label">当前 IP</div>
-              <div class="status-value mono">{{ progress.ip || '—' }}</div>
+              <div class="status-value mono">
+                {{ progress.ip || '—' }}<span v-if="progress.port" class="text-medium-emphasis">:{{ progress.port }}</span>
+              </div>
             </div>
 
             <div v-if="phase === 'download'" class="status-block">
@@ -550,7 +598,7 @@ onBeforeUnmount(() => {
         <v-card v-if="running" class="progress-card" elevation="0">
           <div class="d-flex align-center justify-space-between mb-2">
             <span class="text-body-2 text-medium-emphasis">
-              {{ phase === 'ping' ? '延迟测速进度' : '下载测速进度' }}
+              {{ phase === 'fetch' ? '在线 IP 获取进度' : phase === 'ping' ? '延迟测速进度' : '下载测速进度' }}
             </span>
             <span class="mono text-body-2">
               {{ progress.current }} / {{ progress.total }}
@@ -571,6 +619,8 @@ onBeforeUnmount(() => {
           v-model:config="config"
           :running="running"
           @pick-ip-file="pickIpFile"
+          @open-bestcf="openBestCF"
+          @open-cmliu="openCmliu"
         />
 
         <!-- 结果 -->
@@ -579,6 +629,7 @@ onBeforeUnmount(() => {
           :total="results.length"
           :loading="running"
           @export="exportCsv"
+          @export-txt="exportTxt"
         />
       </div>
     </v-main>

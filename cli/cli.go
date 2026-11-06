@@ -13,7 +13,7 @@ import (
 
 // Run 解析命令行参数并执行一次测速。
 func Run() {
-	var printVersion bool
+	var printVersion, bestcf, officialCIDR, cmliuCIDR bool
 	var minDelay, maxDelay, downloadTime int
 	var maxLossRate float64
 
@@ -33,8 +33,9 @@ CFSTX ` + version.Current + `
         下载测速时间；单个 IP 下载测速最长时间，不能太短；(默认 10 秒)
     -tp 443
         指定测速端口；延迟测速/下载测速时使用的端口；(默认 443 端口)
-    -url https://cf.xiu2.xyz/url
-        指定测速地址；延迟测速(HTTPing)/下载测速时使用的地址，默认地址不保证可用性，建议自建；
+    -url https://speed.cloudflare.com/__down?bytes=90000000
+        指定测速地址；延迟测速(HTTPing)/下载测速时使用的地址，默认使用 Cloudflare 官方测速端点
+        （该端点单次请求上限 100MB，bytes 超过会返回 403）；
 
     -httping
         切换测速模式；延迟测速模式改为 HTTP 协议，所用测试地址为 [-url] 参数；(默认 TCPing)
@@ -58,6 +59,13 @@ CFSTX ` + version.Current + `
         IP段数据文件；如路径含有空格请加上引号；支持其他 CDN IP段；(默认 ip.txt)
     -ip 1.1.1.1,2.2.2.2/24,2606:4700::/32
         指定IP段数据；直接通过参数指定要测速的 IP 段数据，英文逗号分隔；(默认 空)
+    -bestcf
+        在线优选IP；从 bestcf.pages.dev 的「优选IP BestIP」区块抓取全部 IP 并合并测速；
+        每条 IP 使用列表自带的端口，同一 IP 出现多次时优先保留 443 等标准端口；(默认 关闭)
+    -official
+        Cloudflare官方IP段；从 api.cloudflare.com 获取官方发布的 IPv4/IPv6 网段并展开测速；(默认 关闭)
+    -cmliu
+        cmliu的CF-CIDR；使用社区维护的 Cloudflare 网段列表，覆盖面通常比官方更广；(默认 关闭)
     -o result.csv
         写入结果文件；如路径含有空格请加上引号；值为空时不写入文件 [-o ""]；(默认 result.csv)
 
@@ -79,7 +87,7 @@ CFSTX ` + version.Current + `
 	flag.IntVar(&task.TestCount, "dn", 10, "下载测速数量")
 	flag.IntVar(&downloadTime, "dt", 10, "下载测速时间")
 	flag.IntVar(&task.TCPPort, "tp", 443, "指定测速端口")
-	flag.StringVar(&task.URL, "url", "https://cf.xiu2.xyz/url", "指定测速地址")
+	flag.StringVar(&task.URL, "url", "https://speed.cloudflare.com/__down?bytes=90000000", "指定测速地址")
 
 	flag.BoolVar(&task.Httping, "httping", false, "切换测速模式")
 	flag.IntVar(&task.HttpingStatusCode, "httping-code", 0, "有效状态代码")
@@ -97,6 +105,9 @@ CFSTX ` + version.Current + `
 
 	flag.BoolVar(&task.Disable, "dd", false, "禁用下载测速")
 	flag.BoolVar(&task.TestAll, "allip", false, "测速全部 IP")
+	flag.BoolVar(&bestcf, "bestcf", false, "从 bestcf.pages.dev 获取在线优选 IP")
+	flag.BoolVar(&officialCIDR, "official", false, "使用 Cloudflare 官方 IP 段")
+	flag.BoolVar(&cmliuCIDR, "cmliu", false, "使用 cmliu 整理的 CF-CIDR 列表")
 
 	flag.BoolVar(&utils.Debug, "debug", false, "调试输出模式")
 
@@ -124,9 +135,33 @@ CFSTX ` + version.Current + `
 		return
 	}
 
+	// 与原版一致：-ip 指定 IP 段时不再读取 IP 文件
+	if task.IPText != "" {
+		task.SourceIPv4 = false
+		task.SourceIPv6 = false
+	}
+
 	task.InitRandSeed() // 置随机数种子
 
 	fmt.Printf("# CFSTX %s \n\n", version.Current)
+
+	// 在线来源
+	if bestcf || officialCIDR || cmliuCIDR {
+		utils.Cyan.Println("[信息] 正在获取在线 IP 来源...")
+		targets, err := task.FetchOnlineTargets(task.FetchOptions{
+			DefaultPort:         task.TCPPort,
+			AllowIPv6:           task.SourceIPv6,
+			IncludeBestCF:       bestcf,
+			IncludeOfficialCIDR: officialCIDR,
+			IncludeCmliuCIDR:    cmliuCIDR,
+		})
+		if err != nil {
+			utils.Yellow.Printf("[警告] 在线 IP 获取失败：%v\n", err)
+		} else {
+			task.ExtraTargets = targets
+			utils.Green.Printf("[信息] 在线 IP 已获取：%d 个（已按 IP 去重）\n", len(targets))
+		}
+	}
 
 	// 开始延迟测速 + 过滤延迟/丢包
 	pingData := task.NewPing().Run().FilterDelay().FilterLossRate()

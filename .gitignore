@@ -2,8 +2,14 @@
 /dist/
 /Releases/
 /build/bin/
+/build/test/
 *.exe
 *.csv
+result.txt
+
+# 临时目录
+.tmp/
+frontend/.tmp/
 
 # 前端
 node_modules/

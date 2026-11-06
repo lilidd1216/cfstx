@@ -6,10 +6,11 @@ const props = defineProps({
   total: { type: Number, default: 0 },
   loading: { type: Boolean, default: false },
 })
-const emit = defineEmits(['export'])
+const emit = defineEmits(['export', 'export-txt'])
 
 const headers = [
-  { title: 'IP 地址', key: 'ip', sortable: false, width: '28%' },
+  { title: 'IP 地址', key: 'ip', sortable: false, width: '26%' },
+  { title: '端口', key: 'port', align: 'center', width: '74px' },
   { title: '平均延迟', key: 'delay', align: 'end' },
   { title: '丢包率', key: 'lossRate', align: 'end' },
   { title: '下载速度', key: 'speed', align: 'end' },
@@ -54,6 +55,16 @@ function delayColor(delay) {
       >
         导出 CSV
       </v-btn>
+      <v-btn
+        variant="tonal"
+        size="small"
+        prepend-icon="mdi-file-document-outline"
+        :disabled="!results.length"
+        class="ml-2"
+        @click="emit('export-txt')"
+      >
+        导出 TXT
+      </v-btn>
     </v-card-title>
 
     <v-divider />
@@ -71,6 +82,10 @@ function delayColor(delay) {
     >
       <template #item.ip="{ item }">
         <span class="mono text-body-2">{{ item.ip }}</span>
+      </template>
+
+      <template #item.port="{ item }">
+        <span class="mono text-caption text-medium-emphasis">{{ item.port || 443 }}</span>
       </template>
 
       <template #item.delay="{ item }">

@@ -7,10 +7,12 @@ import (
 	"syscall"
 )
 
+// Windows 标准句柄常量是负数：STD_OUTPUT_HANDLE = -11、STD_ERROR_HANDLE = -12。
+// ^uintptr(n) 等于按位取反得到 -(n+1)，所以 -11 要写成 ^uintptr(10)。
 const (
-	attachParentProcess = ^uintptr(0) // (DWORD)-1
-	stdOutputHandle     = ^uintptr(11) // (DWORD)-11
-	stdErrorHandle      = ^uintptr(12) // (DWORD)-12
+	attachParentProcess = ^uintptr(0)  // (DWORD)-1
+	stdOutputHandle     = ^uintptr(10) // (DWORD)-11
+	stdErrorHandle      = ^uintptr(11) // (DWORD)-12
 )
 
 // stdHandleValid 判断标准输出句柄是否已经可用（被重定向或继承）。

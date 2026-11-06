@@ -10,30 +10,80 @@
 
 ## 简介
 
-CFSTX 是一个 **Cloudflare CDN 优选 IP 测速工具**。它会批量测试 Cloudflare CDN 的 IP 延迟与下载速度，帮你从海量 IP 中筛出当前网络环境下最快的那几个。
+CFSTX 是一个 **Cloudflare CDN 优选 IP 测速工具**，提供 **图形界面** 与 **命令行** 两种使用方式（同一个 exe）。
+
+它会批量测试海量 Cloudflare IP 的延迟与下载速度，帮你筛出当前网络下最快的节点。
 
 国外很多网站都在使用 Cloudflare CDN，但分配给中国内地访客的 IP 往往延迟高、丢包多、速度慢。虽然 Cloudflare 公开了全部 [IP 段](https://www.cloudflare.com/zh-cn/ips/)，但手工从里面挑出适合自己的 IP 并不现实——这就是本工具要解决的问题。
 
-本项目是 [XIU2/CloudflareSpeedTest](https://github.com/XIU2/CloudflareSpeedTest) 的衍生版本，**在原作者代码基础上二次开发**，主要差异：
+本项目在原作者的算法基础上，重点增强了 **IP 来源的广度** 与 **桌面端体验**：
 
-- 项目更名为 **CFSTX**，模块路径与发布渠道迁移至 Gitee
-- **移除 Linux / macOS 支持**，专注 Windows（x64 / x86）
-- 删除跨平台 shell 脚本，仅保留 Windows 批处理脚本
-- 版本更新检查指向本项目仓库
+- **七种 IP 来源**可任意组合，去重后一次测速最多可达 **1.3 万个目标**
+- **多端口兼容**：每个 IP 使用它自带的端口测速（443 / 8443 / 2053 / 2083 / 2087 / 2096 等）
+- **图形界面**：勾选式配置、实时进度、结果表格、一键导出
+- **应用内更新**：检测到新版本可直接下载并拉起安装
 
 > [!IMPORTANT]
 > Cloudflare CDN 已**明文禁止代理**方式使用，通过代理套 CDN 的请自行承担风险，请勿过度依赖。
 
 ---
 
-## 特性
+## 界面预览
 
-- **IPv4 + IPv6** 混合测速
-- **TCPing / HTTPing** 两种延迟测速模式
-- 按 **延迟、丢包率、下载速度** 设置过滤条件
-- HTTPing 模式下可按 **地区码**（IATA / 国家码 / 城市码）筛选节点
-- 结果导出 `result.csv`，方便二次处理
-- 配套 Windows 脚本：自动更新 Hosts、3Proxy 配置、DDNS 解析
+> 截图待补充：主界面（IP 来源勾选区）、测速进度、结果表格
+
+---
+
+## 核心特性
+
+### 图形界面
+
+- **勾选式 IP 来源**：内置列表默认必选，其余按需勾选
+- **实时进度**：抓取 / 延迟测速 / 下载测速三阶段分别显示
+- **结果表格**：IP、端口、延迟、丢包率、下载速度、地区码
+- **一键导出**：CSV（表格软件）与 TXT（可直接当 IP 列表复用）
+- **应用内更新**：检测 → 下载 → 拉起安装，带进度条
+
+### 七种 IP 来源
+
+| 来源 | 说明 | 典型数量 |
+|---|---|---|
+| **内置 ip.txt**（必选） | 程序目录下的 CF 网段，每个 /24 随机取一个 IP | ~6000 |
+| 内置 ipv6.txt | IPv6 网段 | — |
+| **优选IP BestIP** | 在线抓取 [bestcf.pages.dev](https://bestcf.pages.dev/) 的「优选IP BestIP」区块，排除 GitHub 链接 | ~1200 |
+| **Cloudflare 官方 IP 段** | `api.cloudflare.com/client/v4/ips` 实时网段 | 数百 |
+| **cmliu CF-CIDR** | 社区维护的补充网段列表 | 数百 |
+| **自定义 IP 源** | 自己填任意列表 URL，每行一个 | 自定 |
+| **手动指定 IP 段** | 直接输入 `IP`、`CIDR` 或 `IP:端口` | 自定 |
+
+所有来源会 **合并并按 IP 去重**。同一 IP 出现多个端口时，优先保留 443，其次 8443 / 2053 / 2083 / 2087 / 2096。
+
+### 多端口兼容
+
+在线列表里的 IP 常带不同端口（如 `1.2.3.4:8443`）。CFSTX 会 **用每个 IP 自带的端口去测**，而不是强制统一端口。结果表格与导出文件都会显示实际使用的端口。
+
+### 域名自动解析
+
+在线列表中混有域名（如 `saas.sin.fan:443`）。抓到域名时会通过 **阿里 DoH**（失败回退 Cloudflare DoH）解析成 IP 再参与测速。
+
+### 本次启动内缓存
+
+在线来源在 **每次打开程序后的第一次测速** 时抓取，之后复用，不再重复请求。修改 IP 来源配置或重新打开程序才会重新抓取。
+
+### 结果导出
+
+| 格式 | 内容 | 用途 |
+|---|---|---|
+| CSV | 完整字段（IP、端口、延迟、丢包、速度、地区） | Excel / 表格软件 |
+| TXT | `IP:端口#地区 速度` | 直接作为 IP 列表再次测速 |
+
+TXT 示例：
+
+```text
+27.44.142.135:10001#HKG 40.66MB/s
+120.240.179.158:10001#HKG 25.22MB/s
+104.234.174.220:443#SIN 12.06MB/s
+```
 
 ---
 
@@ -43,59 +93,44 @@ CFSTX 是一个 **Cloudflare CDN 优选 IP 测速工具**。它会批量测试 C
 
 | 版本 | 文件 | 说明 |
 |---|---|---|
-| **安装版（推荐）** | `CFSTX-Setup-x.x.x.exe` | 标准安装向导，可选安装路径，自动创建开始菜单和桌面快捷方式，支持卸载 |
+| **安装版（推荐）** | `CFSTX-Setup-x.x.x.exe` | 标准安装向导，可选安装路径，自动创建开始菜单和桌面快捷方式，支持卸载与应用内更新 |
 | 免安装版 | `CFSTX-x.x.x-portable.zip` | 解压即用，不写注册表，适合放到 U 盘或临时使用 |
 
 > [!NOTE]
 > 由于暂未购买代码签名证书，首次运行安装包时 Windows SmartScreen 可能提示「**无法验证发布者**」。
 > 这是未签名程序的正常提示，点击「**更多信息**」→「**仍要运行**」即可继续。
 
-> 如果平均延迟异常低（如 0.xx），说明测速时走了代理，请先关闭代理软件再测速。
-
 ---
 
 ## 快速开始
 
-最简单的方式：解压后直接双击 `cfstx.exe`，等待测速完成，结果会打印在窗口并保存到同目录的 `result.csv`。
+### 图形界面（推荐）
 
-带参数运行需要在 CMD 中执行，例如：
+1. 双击 `cfstx.exe`（不带任何参数即进入图形界面）
+2. 在「IP 来源」中勾选需要的来源
+3. 按需调整「延迟上限」「速度下限」等过滤条件
+4. 点击「开始测速」
+
+> [!TIP]
+> **测速前请关闭 VPN / 代理软件**。走代理时测出的延迟是相对代理出口的，不能反映你本地网络到 Cloudflare 的真实情况。
+
+### 命令行
+
+带参数运行即进入命令行模式，例如：
 
 ```bat
-cfstx -tl 200 -dn 20
+cfstx -httping -tl 200 -sl 5
 ```
 
 > PowerShell 下请把命令中的 `cfstx` 改为 `.\cfstx`。
 
-### 在 CMD 中带参数运行
-
-很多人直接以**绝对路径**运行会发现报错，因为默认参数 `-f ip.txt` 是相对路径。推荐先进入程序目录再运行：
-
-**方式一**：打开程序目录 → 空白处按住 <kbd>Shift</kbd> + 鼠标右键 → 选择「在此处打开命令窗口」→ 输入命令。
-
-**方式二**：打开程序目录 → 在文件夹地址栏输入 `cmd` 回车 → 输入命令。
-
-**方式三**：随便打开 CMD，用 `cd /d "D:\Program Files\cfstx"` 进入目录。
-
-### 用快捷方式带参数运行
-
-右键 `cfstx.exe` →「创建快捷方式」→ 右键快捷方式 →「属性」→ 修改「目标」：
-
-```bat
-D:\ABC\cfstx\cfstx.exe -tl 200 -dn 20 -o " "
-
-# 路径含空格时，把启动参数放在引号外面
-"D:\Program Files\cfstx\cfstx.exe" -tl 200 -dn 20 -o " "
-```
-
-> 快捷方式的「起始位置」不能留空，否则会因绝对路径找不到 `ip.txt`。
+程序会自动在自身目录查找 `ip.txt`，因此从任意目录用绝对路径调用也能正常读取数据文件。
 
 ---
 
-## 参数说明
+## 命令行参数
 
 ```text
-C:\>cfstx -h
-
 CFSTX vX.X.X
 测试各个 CDN 或网站所有 IP 的延迟和速度，获取最快 IP (IPv4+IPv6)！
 https://gitee.com/liliaic/cfstx
@@ -108,64 +143,70 @@ https://gitee.com/liliaic/cfstx
     -dn 10
         下载测速数量；延迟测速并排序后，从最低延迟起下载测速的数量；(默认 10 个)
     -dt 10
-        下载测速时间；单个 IP 下载测速最长时间，不能太短；(默认 10 秒)
+        下载测速时间；单个 IP 下载测速最长时间；(默认 10 秒)
     -tp 443
-        指定测速端口；延迟测速/下载测速时使用的端口；(默认 443 端口)
-    -url https://cf.xiu2.xyz/url
-        指定测速地址；延迟测速(HTTPing)/下载测速时使用的地址，默认地址不保证可用性，建议自建；
-        当下载测速时，软件会从 HTTP 响应头中获取该 IP 当前地区码并显示出来。
+        指定测速端口；列表项没有自带端口时使用的默认端口；(默认 443)
+    -url https://speed.cloudflare.com/__down?bytes=90000000
+        指定测速地址；延迟测速(HTTPing)/下载测速时使用的地址
+        （该端点单次请求上限 100MB，bytes 超过会返回 403）
 
     -httping
-        切换测速模式；延迟测速模式改为 HTTP 协议，所用测试地址为 [-url] 参数；(默认 TCPing)
-        当使用 HTTP 测速模式时，软件会从 HTTP 响应头中获取该 IP 当前地区码并显示出来。
-        注意：HTTPing 本质上也算一种网络扫描行为，如果你在服务器上面运行，需要降低并发(-n)，
-        否则可能会被一些严格的商家暂停服务。
+        切换测速模式；延迟测速模式改为 HTTP 协议；(默认 TCPing)
     -httping-code 200
         有效状态代码；HTTPing 延迟测速时网页返回的有效 HTTP 状态码，仅限一个；(默认 200 301 302)
     -cfcolo HKG,KHH,NRT,LAX,SEA,SJC,FRA,MAD
-        匹配指定地区；IATA 机场地区码或国家/城市码，英文逗号分隔，大小写均可，仅 HTTPing 模式可用；
-        支持 Cloudflare、AWS CloudFront、Fastly、Gcore、CDN77、Bunny 等 CDN
-        其中 Cloudflare、AWS CloudFront、Fastly 使用的是 IATA 三字机场地区码，如：HKG,LAX
-        其中 CDN77、Bunny 使用的是 二字国家/区域码，如：US,CN
-        其中 Gcore 使用的是 二字城市码，如：FR,AM
+        匹配指定地区；IATA 机场地区码或国家/城市码，英文逗号分隔，仅 HTTPing 模式可用
 
     -tl 200
-        平均延迟上限；只输出低于指定平均延迟的 IP，各上下限条件可搭配使用；(默认 9999 ms)
+        平均延迟上限；只输出低于指定平均延迟的 IP；(默认 9999 ms)
     -tll 40
         平均延迟下限；只输出高于指定平均延迟的 IP；(默认 0 ms)
     -tlr 0.2
-        丢包几率上限；只输出低于/等于指定丢包率的 IP，范围 0.00~1.00，0 过滤掉任何丢包的 IP；(默认 1.00)
+        丢包几率上限；范围 0.00~1.00，0 过滤掉任何丢包的 IP；(默认 1.00)
     -sl 5
-        下载速度下限；只输出高于指定下载速度的 IP，凑够指定数量 [-dn] 才会停止测速；(默认 0.00 MB/s)
+        下载速度下限；只输出高于指定下载速度的 IP；(默认 0.00 MB/s)
 
     -p 10
-        显示结果数量；测速后直接显示指定数量的结果，为 0 时不显示结果直接退出；(默认 10 个)
+        显示结果数量；为 0 时不显示结果直接退出；(默认 10 个)
     -f ip.txt
-        IP段数据文件；如路径含有空格请加上引号；支持其他 CDN IP段；(默认 ip.txt)
+        IP段数据文件；如路径含有空格请加上引号；(默认 ip.txt)
     -ip 1.1.1.1,2.2.2.2/24,2606:4700::/32
-        指定IP段数据；直接通过参数指定要测速的 IP 段数据，英文逗号分隔；(默认 空)
+        指定IP段数据；英文逗号分隔；(默认 空)
     -o result.csv
-        写入结果文件；如路径含有空格请加上引号；值为空时不写入文件 [-o ""]；(默认 result.csv)
-        注意：在一些环境下使用 -o "" 可能会被忽略掉这个空参数导致报错，可加个空格 -o " " 解决
+        写入结果文件；值为空时不写入文件 [-o ""]；(默认 result.csv)
+
+    -bestcf
+        在线优选IP；从 bestcf.pages.dev 的「优选IP BestIP」区块抓取全部 IP 并合并测速
+    -official
+        Cloudflare官方IP段；从 api.cloudflare.com 获取官方发布的网段并展开测速
+    -cmliu
+        cmliu的CF-CIDR；使用社区维护的 Cloudflare 网段列表
 
     -dd
-        禁用下载测速；禁用后测速结果会按延迟排序 (默认按下载速度排序)；(默认 启用)
+        禁用下载测速；禁用后测速结果会按延迟排序 (默认按下载速度排序)
     -allip
         测速全部的IP；对 IP 段中的每个 IP (仅支持 IPv4) 进行测速；(默认 每个 /24 段随机测速一个 IP)
 
     -debug
-        调试输出模式；会在一些非预期情况下输出更多日志以便判断原因；(默认 关闭)
+        调试输出模式；会在一些非预期情况下输出更多日志以便判断原因
     -v
         打印程序版本 + 检查版本更新
     -h
         打印帮助说明
 ```
 
-> 所有参数都有默认值，按需使用即可，参数顺序无关。
+> 所有参数都有默认值，按顺序无关。
 
 ---
 
 ## 使用示例
+
+### 组合多个在线来源
+
+```bat
+REM 内置 ip.txt + 在线优选IP + 官方网段 + cmliu 网段
+cfstx -bestcf -official -cmliu -tl 200 -sl 5
+```
 
 ### IPv4 / IPv6
 
@@ -180,8 +221,6 @@ REM 直接通过参数指定
 cfstx -ip 1.1.1.1,2606:4700::/32
 ```
 
-> 本项目支持 IPv4 + IPv6 混合测速，一个文件内可以同时包含两种地址。
-
 ### HTTPing
 
 ```bat
@@ -190,60 +229,9 @@ cfstx -httping
 
 REM 指定有效状态码
 cfstx -httping -httping-code 200
-
-REM 指定 HTTPing 测试地址
-cfstx -httping -url https://cf.xiu2.xyz/url
-
-REM 测试 80 端口
-cfstx -httping -tp 80 -url http://cdn.cloudflare.steamstatic.com/steam/apps/5952/movie_max.webm
 ```
 
 TCP 协议耗时更短、资源更少，超时 1 秒，是默认模式；HTTP 协议适用于验证某域名指向某 IP 时是否可访问，超时 2 秒。同一 IP 的延迟一般为 **ICMP < TCP < HTTP**。
-
-### 匹配指定地区
-
-```bat
-cfstx -httping -cfcolo HKG,KHH,NRT,LAX,SEA,SJC,FRA,MAD
-```
-
-只有 HTTPing 模式可用，因为地区码来自 HTTP 响应头。可参考：
-
-- IATA 三字机场码：<https://www.cloudflarestatus.com/>
-- 二字国家码：[ISO 3166-1](https://zh.wikipedia.org/wiki/ISO_3166-1%E4%BA%8C%E4%BD%8D%E5%AD%97%E6%AF%8D%E4%BB%A3%E7%A0%81)
-
-### 文件相对 / 绝对路径
-
-```bat
-REM 输出到文件，不显示结果（-p 0）
-cfstx -f 1.txt -p 0 -dd
-
-REM 显示结果，不输出文件
-cfstx -f 2.txt -o "" -p 10 -dd
-
-REM 相对路径
-cfstx -f abc\3.txt -o abc\result.txt -dd
-
-REM 绝对路径
-cfstx -f C:\abc\4.txt -o C:\abc\result.csv -dd
-```
-
-> 以绝对路径运行程序时，`-f` / `-o` 也必须是绝对路径，否则会报错找不到文件。
-
-### 测速其他端口
-
-```bat
-REM 测速 80 端口
-cfstx -tp 80 -url http://speed.cloudflare.com/__down?bytes=99999999
-```
-
-非 80/443 端口需要确认你的测速地址支持通过该端口访问。
-
-### 自定义测速地址
-
-```bat
-REM 地址要求：可直接下载、文件大于 200MB、使用 Cloudflare CDN
-cfstx -url https://cf.xiu2.xyz/url
-```
 
 ### 自定义过滤条件
 
@@ -259,33 +247,73 @@ cfstx -tlr 0
 
 REM 要求下载速度高于 5 MB/s，凑够 10 个
 cfstx -sl 5 -dn 10
-
-REM 延迟 + 速度组合
-cfstx -tl 200 -sl 5.6 -dn 10
 ```
 
-**几种条件组合的输出预期：**
+---
 
-| 条件 | 有满足项 | 无满足项 |
+## 测速地址说明
+
+CFSTX 默认使用 **Cloudflare 官方测速端点**：
+
+```text
+https://speed.cloudflare.com/__down?bytes=90000000
+```
+
+选择它的原因与限制如下，遇到测不出结果时请先看这一节。
+
+### 为什么用它
+
+- 原项目默认地址 `https://cf.xiu2.xyz/url` 已被 Cloudflare 封禁（返回 **403**），原作者在 [#490](https://github.com/XIU2/CloudflareSpeedTest/discussions/490) 中也说明「默认地址不保证可用性，建议自建」
+- `speed.cloudflare.com` 是 CF 官方测速服务，在所有 CF 标准端口（443 / 8443 / 2053 / 2083 / 2087 / 2096）上都返回 200，是 **多端口兼容的前提**
+- HEAD 请求返回 200，可同时用于延迟测速与下载测速
+
+### 三个必须知道的限制
+
+| 限制 | 表现 | 说明 |
 |---|---|---|
-| 未指定任何延迟/速度条件 | 输出全部结果 | — |
-| 指定了延迟条件（`-tl` / `-tll`） | 只输出满足条件的 IP | 输出空 |
-| 指定了下载速度条件（`-sl`） | 只输出满足条件的 IP | 输出空 |
-| 指定了 `-sl` 且开启 `-debug` | 只输出满足条件的 IP | 输出**全部**结果 |
+| **单次请求上限 100MB** | `bytes >= 100000000` 返回 **403** | 所以默认用 `90000000`（90MB） |
+| **按 bytes 计算配额** | 大量请求后返回 **429** | 延迟测速已自动改用 `bytes=0`（不消耗配额），只有下载测速才用 90MB |
+| **每日流量上限** | 晚高峰可能失败 | 社区反馈每天 UTC 00:00（北京时间 8 点）重置 |
 
-> 只要指定了 `-sl` 且没凑够 `-dn` 数量，程序就会一直测下去。建议同时指定 `-tl`，避免耗时过长。
+### 想更稳定？自建测速地址
 
-### 单独测速一个或多个 IP
+推荐 [cmliu/CF-Workers-SpeedTestURL](https://github.com/cmliu/CF-Workers-SpeedTestURL)，用 Cloudflare Workers 部署，支持 `/200m`、`/1g` 等路径指定大小，然后在界面「测速地址」或 `-url` 中填入你的地址。
 
-```bat
-REM 方式一：直接指定
-cfstx -ip 1.1.1.1,2.2.2.2/24,2606:4700::/32
+> 自建地址需要满足：通过 Cloudflare CDN 访问、可直接下载、文件足够大。
 
-REM 方式二：写入 1.txt 后指定文件
-cfstx -f 1.txt
+---
+
+## IP 来源详解
+
+### 优选IP BestIP（bestcf.pages.dev）
+
+每次打开程序后首次测速时抓取，流程为：
+
+1. 读取首页，提取「优选IP BestIP」区块下的全部链接（排除 GitHub）
+2. 并发抓取所有链接内容
+3. 解析 `IP:端口#备注` 格式，域名通过 DoH 解析
+4. 按 IP 去重，端口按优先级保留
+
+### Cloudflare 官方 IP 段
+
+调用 `https://api.cloudflare.com/client/v4/ips`，返回官方实时发布的 IPv4 / IPv6 网段。这是最权威的来源，但网段较大，会按 /24 随机抽样。
+
+### cmliu CF-CIDR
+
+社区长期维护的补充列表，覆盖面通常比官方 API 更广。
+
+### 自定义 IP 源
+
+在界面中每行填一个 URL，程序会像处理 bestcf 的链接一样抓取并解析。支持：
+
+```text
+1.2.3.4
+1.2.3.4:8443
+1.2.3.4:8443#备注
+1.2.3.4/24
+[2606:4700::1]:8443#备注
+saas.example.com:443        ← 域名，自动解析
 ```
-
-`/24` 表示对该段随机取一个 IP 测速；要测整段请加 `-allip`（仅 IPv4）。
 
 ---
 
@@ -294,80 +322,73 @@ cfstx -f 1.txt
 测速完毕后默认显示最快的 10 个 IP：
 
 ```text
-IP 地址           已发送  已接收  丢包率  平均延迟  下载速度(MB/s)  地区码
-104.27.200.69     4      4       0.00   146.23    28.64          LAX
-172.67.60.78      4      4       0.00   139.82    15.02          SEA
-104.25.140.153    4      4       0.00   146.49    14.90          SJC
-...
+IP 地址            端口   已发送  已接收  丢包率  平均延迟  下载速度(MB/s)  地区码
+27.44.142.135      10001  4      4       0.00   63.20    40.66          HKG
+120.240.179.158    10001  4      4       0.00   58.00    25.22          HKG
+104.234.174.220    443    4      4       0.00   153.00   12.06          SIN
 ```
 
-第一行就是**下载速度最快、平均延迟最低**的最优 IP。完整结果保存在 `result.csv`：
-
-```csv
-IP 地址,已发送,已接收,丢包率,平均延迟,下载速度(MB/s),地区码
-104.27.200.69,4,4,0.00,146.23,28.64,LAX
-```
-
-> `result.csv` 用微软 Excel 打开可能中文乱码，用记事本或其他表格软件正常。
+第一行就是**下载速度最快、平均延迟最低**的最优 IP。
 
 ### 进度条数字怎么看
 
-以 `-tll 40 -tl 150 -sl 1 -dn 5` 为例：
-
 ```text
-开始延迟测速（模式：TCP, 端口：443, 范围：40 ~ 150 ms, 丢包：1.00)
-321 / 321 [-------------------------] 可用: 30
-开始下载测速（下限：1.00 MB/s, 数量：5, 队列：10）
-3 / 5 [-------------------------↗---]
+开始延迟测速（模式：HTTP, 默认端口：443, 范围：0 ~ 200 ms, 丢包：1.00）
+6996 / 6996 [-------------------------] 可用: 2785
+开始下载测速（下限：5.00 MB/s, 数量：10, 队列：100）
+39 / 100 [-------------------------↗---]
 ```
 
-- `可用: 30` —— 321 个 IP 中，延迟测速未超时的有 30 个
-- `队列：10` —— 再按延迟上下限和丢包条件过滤后，剩 10 个进入下载测速
-- `3 / 5` —— 要求找到 5 个达到 1 MB/s 的 IP，实际只找到 3 个
+- `可用: 2785` —— 6996 个目标中，延迟测速未超时的有 2785 个
+- `队列：100` —— 再按延迟/丢包条件过滤后，计划进入下载测速的数量
+- `39 / 100` —— 测了 39 个就凑够了 10 个达标 IP，提前停止
 
-所以「明明有 30 个可用，最后只剩 3 个」是条件过滤的正常结果，不是程序出错。
-
-> 下载测速是单线程排队执行的，所以等待测速的 IP 数量叫「队列」。
+> 为避免「下载测速数量 × 10」之外无限测速，队列上限为 `测速数量 × 10`。
 
 ---
 
 ## 常见问题
 
+### 可用 IP 很多，但下载速度全是 0.00
+
+**这通常不是故障**，而是以下原因之一：
+
+1. **只测了前 N 个**：默认只对延迟最低的 `测速数量`（10 个）做下载测速，其余 IP 的速度显示为 0
+2. **测速还在进行中**：下载测速是单线程排队执行，表格里未轮到的 IP 显示 0
+3. **确实低于速度下限**：所有 IP 都没达到「速度下限」时，程序会返回全部结果并提示
+
+### 测速一开始就返回 429 / 全部 IP 不可用
+
+CF 的 `__down` 端点有配额限制。程序已让延迟测速使用 `bytes=0` 规避，但如果 **下载测速** 密集执行仍可能触发。等待一段时间（或次日 UTC 00:00 后）再试，或改用自建测速地址。
+
+### 延迟上限设 150，一个 IP 都筛不出来
+
+先关掉 VPN/代理再测。如果关闭后仍然如此，把下限先设为 `9999` 看整体分布——中国大陆到 CF 的延迟经常在 **150~250ms**（走美国西海岸），只有部分 IP 会走香港/日本/新加坡节点。
+
+### 延迟异常低（如 0.xx）
+
+说明测速时走了代理，请关闭代理软件后再测速。
+
 ### 下载速度都是 0.00？
 
-先加上 `-debug` 参数重新跑一遍，程序会输出具体报错：
+在图形界面勾选「调试模式」，或命令行加 `-debug`，程序会输出具体报错：
 
 | 报错 | 含义 |
 |---|---|
 | `connection reset by peer` | 链接被重置，测速地址或 IP 被阻断 |
-| `HTTP 状态码: 403` | 测速地址拒绝访问 |
-| `context deadline exceeded` | 请求超时，可能是 IP/网络问题，或 `-dt` 太短 |
-| `tls: handshake failure` | 测速地址与测速 IP 不匹配（CDN 不一致） |
-| `certificate is valid for XXX, not YYY` | 证书不包含该域名，IP 不可用于此地址 |
-| `certificate has expired` | 证书过期或尚未生效 |
-| `certificate signed by unknown authority` | 系统证书配置有问题 |
-
-进一步排查：
-
-1. **换测速地址**：参考 [#490](https://github.com/XIU2/CloudflareSpeedTest/discussions/490) 里的其他地址；想要稳定建议自建。
-2. **换测速 IP**：部分 IP 能通 TCP 但无法建立 HTTP 连接（如回源 IP），多试几个。
-3. **换网络**：用手机 USB 网络共享替代宽带，对比结果。
+| `HTTP 状态码: 403` | 测速地址拒绝访问（多半是 bytes 超限） |
+| `HTTP 状态码: 429` | 触发配额限制 |
+| `context deadline exceeded` | 请求超时，可能是 IP/网络问题，或「单 IP 时长」太短 |
+| `tls: handshake failure` | 测速地址与测速 IP 不匹配 |
+| `certificate is valid for XXX, not YYY` | 证书不包含该域名 |
 
 ### 测速结果每次都不一样？
 
 正常。每次都是在每个 IP 段中随机抽取 IP，结果不可能完全相同。
 
-### 开机后第一次测速延迟偏高？
+### 点击开始测速后立刻结束、结果为 0
 
-常见现象，后续测速会恢复正常。建议正式测速前先随便跑一次热身。
-
-### 为什么延迟低的 IP 速度反而慢？
-
-延迟和丢包最优的 IP 不一定速度最快，传输速度可能被 QOS 等策略限制。可以用 `-tll` 排除掉低延迟但速度差的 IP。
-
-### 测速时走了代理怎么办？
-
-如果平均延迟异常低（如 0.xx），请关闭代理软件后再测速。如果路由器上有代理，也要关闭或排除。
+检查 `ip.txt` 是否与 `cfstx.exe` 在同一目录。程序会按「当前工作目录 → exe 所在目录」的顺序查找数据文件；如果两处都没有，目标数为 0 会立即结束。
 
 ---
 
@@ -381,34 +402,58 @@ IP 地址,已发送,已接收,丢包率,平均延迟,下载速度(MB/s),地区�
 | `cfstx_3proxy.bat` | 更新 3Proxy 配置，一次性加速所有 Cloudflare 站点 |
 | `cfstx_ddns.bat` | 通过 Cloudflare API 自动更新域名解析 |
 
-详见 [script/README.md](script/README.md)。
-
 ---
 
 ## 手动编译
 
-需要 Go 1.18 及以上版本。版本号通过 `-ldflags` 注入：
+需要 **Go 1.26+** 与 **Node.js 18+**。
 
 ```bat
-go build -ldflags "-s -w -X main.version=v1.0.0"
+REM 1. 构建前端
+cd frontend
+npm install
+npm run build
+cd ..
+
+REM 2. 构建 exe（图标已通过 rsrc_windows_amd64.syso 自动嵌入）
+go build -ldflags "-H windowsgui -X gitee.com/liliaic/cfstx/version.Current=v1.1.0" -o build\bin\cfstx.exe .
+
+REM 3. 可选：编译安装包（需 Inno Setup 6）
+ISCC.exe installer.iss
 ```
 
-编译 32 位版本：
+> 图标资源：`assets/cfstx.ico`，由 `rsrc -ico assets/cfstx.ico -o rsrc_windows_amd64.syso` 生成。
+> 如需重新生成图标，见 `build/make-icon.ps1`。
 
-```bat
-SET GOARCH=386
-go build -ldflags "-s -w -X main.version=v1.0.0"
-```
+---
 
-批量编译并指定输出路径：
+## 更新日志
 
-```bat
-SET version=v1.0.0
-SET GOARCH=amd64
-go build -o Releases\cfstx_windows_amd64\cfstx.exe -ldflags "-s -w -X main.version=%version%"
-```
+### v1.1.0
 
-> 本项目仅面向 Windows。如需在非 Windows 环境交叉编译，请设置 `GOOS=windows`。
+**新增**
+
+- 图形界面：勾选式 IP 来源、实时进度、结果表格（含端口列）
+- 七种 IP 来源：bestcf.pages.dev、Cloudflare 官方 IP 段、cmliu CF-CIDR、自定义源
+- 域名自动解析（阿里 / Cloudflare DoH）
+- 多端口兼容：每个 IP 使用自带端口测速
+- 按 IP 去重，端口按 CF 标准端口优先级保留
+- 本次启动内的在线 IP 缓存
+- 导出 TXT（`IP:端口#备注` 格式）
+- 命令行新增 `-bestcf` / `-official` / `-cmliu`
+
+**修复**
+
+- 默认测速地址 `cf.xiu2.xyz/url` 已被 Cloudflare 封禁（403），改为官方端点
+- CF `__down` 端点单次 100MB 上限导致的 403
+- HTTPing 大量请求触发 429（延迟测速改用 `bytes=0`）
+- 数据文件按相对路径读取，从其他目录启动时找不到 `ip.txt`
+- 下载测速按固定时长归一化，文件提前下完时速度被低估
+- 设置速度下限时对全部可用 IP 逐个测速，耗时可达数小时
+
+### v1.0.0
+
+- 基于上游首次发布，移除 Linux / macOS 支持，专注 Windows
 
 ---
 
@@ -418,6 +463,8 @@ go build -o Releases\cfstx_windows_amd64\cfstx.exe -ldflags "-s -w -X main.versi
 
 1. **[XIU2/CloudflareSpeedTest](https://github.com/XIU2/CloudflareSpeedTest)** —— 本项目直接基于它二次开发。原作者 [**XIU2**](https://github.com/XIU2) 从零实现了 Cloudflare IP 优选测速的完整方案，包括 TCPing/HTTPing 双模式、地区码识别、下载测速与丰富的过滤条件。本项目的 README 参数文档与故障排查内容同样源自该项目。
 2. **[Spedoske/CloudflareScanner](https://github.com/Spedoske/CloudflareScanner)** —— CloudflareSpeedTest 的前身项目，提供了早期的基础实现。
+3. **[cmliu](https://github.com/cmliu)** —— 提供了长期维护的 CF-CIDR 网段列表与 [Workers 测速地址方案](https://github.com/cmliu/CF-Workers-SpeedTestURL)。
+4. **[bestcf.pages.dev](https://bestcf.pages.dev/)** —— 提供了社区汇总的优选 IP 列表。
 
 如果你觉得这个工具好用，**请优先给[原作者的项目](https://github.com/XIU2/CloudflareSpeedTest)点一个 ⭐**，也欢迎关注作者的其他[开源作品](https://github.com/XIU2)。
 
