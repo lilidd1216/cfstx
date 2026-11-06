@@ -17,6 +17,8 @@ const config = ref({
   httping: true,
   httpingCode: 0,
   colo: '',
+  probeEnabled: false,
+  probeDomain: '',
   maxDelay: 200,
   minDelay: 0,
   maxLossRate: 1.0,
@@ -120,6 +122,7 @@ const displayResults = computed(() => {
 const phaseLabel = computed(() => {
   switch (phase.value) {
     case 'fetch': return '获取在线 IP 中'
+    case 'probe': return '域名探测中'
     case 'ping': return '延迟测速中'
     case 'download': return '下载测速中'
     case 'done': return '测速完成'
@@ -130,6 +133,7 @@ const phaseLabel = computed(() => {
 const phaseColor = computed(() => {
   switch (phase.value) {
     case 'fetch': return 'info'
+    case 'probe': return 'warning'
     case 'ping': return 'primary'
     case 'download': return 'secondary'
     case 'done': return 'success'
@@ -373,6 +377,17 @@ function handleEvent(event, data) {
           speed: 0,
           msg: data.msg || '',
         }
+      } else if (data.stage === 'probe') {
+        phase.value = 'probe'
+        progress.value = {
+          current: data.current,
+          total: data.total,
+          available: 0,
+          ip: '',
+          port: 0,
+          speed: 0,
+          msg: '',
+        }
       } else if (data.stage === 'ping') {
         phase.value = 'ping'
         progress.value = {
@@ -615,7 +630,7 @@ onBeforeUnmount(() => {
         <v-card v-if="running" class="progress-card" elevation="0">
           <div class="d-flex align-center justify-space-between mb-2">
             <span class="text-body-2 text-medium-emphasis">
-              {{ phase === 'fetch' ? '在线 IP 获取进度' : phase === 'ping' ? '延迟测速进度' : '下载测速进度' }}
+              {{ phase === 'fetch' ? '在线 IP 获取进度' : phase === 'probe' ? '域名探测进度' : phase === 'ping' ? '延迟测速进度' : '下载测速进度' }}
             </span>
             <span class="mono text-body-2">
               {{ progress.current }} / {{ progress.total }}
@@ -681,23 +696,38 @@ onBeforeUnmount(() => {
 
           <div class="diagnosis-steps mt-4">
             <div class="diag-row" :class="{ zero: !diagnosis.totalTargets }">
-              <span class="diag-label">① 加载到的测速目标</span>
+              <span class="diag-label">加载到的测速目标</span>
               <span class="diag-value">{{ diagnosis.totalTargets }}</span>
             </div>
-            <div class="diag-row" :class="{ zero: diagnosis.totalTargets > 0 && !diagnosis.available }">
-              <span class="diag-label">② 延迟测速连通</span>
+            <div
+              v-if="diagnosis.probePassed >= 0"
+              class="diag-row"
+              :class="{ zero: diagnosis.totalTargets > 0 && !diagnosis.probePassed }"
+            >
+              <span class="diag-label">域名探测通过</span>
+              <span class="diag-value">{{ diagnosis.probePassed }}</span>
+            </div>
+            <div
+              class="diag-row"
+              :class="{
+                zero:
+                  (diagnosis.probePassed < 0 ? diagnosis.totalTargets : diagnosis.probePassed) > 0 &&
+                  !diagnosis.available,
+              }"
+            >
+              <span class="diag-label">延迟测速连通</span>
               <span class="diag-value">{{ diagnosis.available }}</span>
             </div>
             <div class="diag-row" :class="{ zero: diagnosis.available > 0 && !diagnosis.afterDelay }">
-              <span class="diag-label">③ 通过延迟/丢包过滤</span>
+              <span class="diag-label">通过延迟/丢包过滤</span>
               <span class="diag-value">{{ diagnosis.afterDelay }}</span>
             </div>
             <div class="diag-row" :class="{ zero: diagnosis.afterDelay > 0 && !diagnosis.downloadTested }">
-              <span class="diag-label">④ 完成下载测速</span>
+              <span class="diag-label">完成下载测速</span>
               <span class="diag-value">{{ diagnosis.downloadTested }}</span>
             </div>
             <div class="diag-row" :class="{ zero: diagnosis.downloadTested > 0 && !diagnosis.maxSpeed }">
-              <span class="diag-label">⑤ 最高下载速度</span>
+              <span class="diag-label">最高下载速度</span>
               <span class="diag-value">{{ (diagnosis.maxSpeed || 0).toFixed(2) }} MB/s</span>
             </div>
           </div>

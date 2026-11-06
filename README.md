@@ -429,6 +429,17 @@ ISCC.exe installer.iss
 
 ## 更新日志
 
+### v1.1.2
+
+**新增**
+
+- **自定义测速域名探测**（延迟测速 → 开关）
+  开启后，先用 `https://你的域名/cdn-cgi/trace` 探测哪些 IP 真正服务你的 Worker / Pages 域名，自动剔除不适配的 IP。
+
+  **解决的痛点**：CFSTX 用 `speed.cloudflare.com` 测速时，测的是「这个 IP 能否连上 Cloudflare」；而你的代理客户端用的是你自己的域名。两者路由并不完全重合——实测某 Worker 域名的 5955 个候选 IP 中，只有约 1500 个真正服务它，其余会返回 `error code: 1034` 或直接超时。这就是「测速明明通过，Clash 里却大量 timeout」的根因。
+
+  **不消耗 Workers 配额**：`/cdn-cgi/trace` 由 Cloudflare 边缘节点直接响应，不进入 Worker 脚本，因此不计入 Workers 请求数。
+
 ### v1.1.1
 
 **新增**

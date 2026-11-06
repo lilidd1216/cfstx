@@ -27,6 +27,9 @@ var (
 	SourceIPv6 = false
 	// ExtraTargets 由上层注入的额外测速目标（在线优选 IP 等）
 	ExtraTargets []*Target
+	// OverrideTargets 不为 nil 时，LoadTargets 直接返回它，
+	// 用于「先加载全部目标 → 域名探测筛选 → 再测速」的流程。
+	OverrideTargets []*Target
 )
 
 // Target 表示一个待测速目标。每条目标自带端口，
@@ -327,6 +330,10 @@ func dedupeTargets(targets []*Target) []*Target {
 
 // LoadTargets 汇总所有启用的 IP 来源并去重。
 func LoadTargets() []*Target {
+	if OverrideTargets != nil {
+		return OverrideTargets
+	}
+
 	ranges := newIPRanges()
 
 	// 手动指定的 IP 段（只解析、不随机化 CIDR 之外的来源）

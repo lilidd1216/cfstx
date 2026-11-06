@@ -45,6 +45,10 @@ type Config struct {
 	Httping     bool   `json:"httping"`
 	HttpingCode int    `json:"httpingCode"`
 	Colo        string `json:"colo"`
+	// ProbeEnabled 开启后，会先用 ProbeDomain 的 /cdn-cgi/trace 探测，
+	// 剔除不服务该域名的 IP。该路径绕过 Worker，不消耗 Workers 配额。
+	ProbeEnabled bool   `json:"probeEnabled"`
+	ProbeDomain  string `json:"probeDomain"`
 
 	// IP 来源
 	Sources       []string `json:"sources"`       // ipv4 / ipv6 / bestcf / custom / manual
@@ -113,13 +117,14 @@ type LogEntry struct {
 
 // Diagnosis 描述一次测速结果为 0 时的具体原因，供界面提示用户。
 type Diagnosis struct {
-	TotalTargets   int    `json:"totalTargets"`   // 加载到的测速目标总数
-	Available      int    `json:"available"`      // 延迟测速中连通的 IP 数
-	AfterDelay     int    `json:"afterDelay"`     // 通过延迟/丢包过滤的 IP 数
-	DownloadTested int    `json:"downloadTested"` // 实际做了下载测速的 IP 数
-	MaxSpeed       float64 `json:"maxSpeed"`      // 测到的最高下载速度 MB/s
-	Reason         string `json:"reason"`         // 直接原因
-	Suggestion     string `json:"suggestion"`     // 建议操作
+	TotalTargets   int     `json:"totalTargets"`   // 加载到的测速目标总数
+	ProbePassed    int     `json:"probePassed"`    // 域名探测通过的 IP 数
+	Available      int     `json:"available"`      // 延迟测速中连通的 IP 数
+	AfterDelay     int     `json:"afterDelay"`     // 通过延迟/丢包过滤的 IP 数
+	DownloadTested int     `json:"downloadTested"` // 实际做了下载测速的 IP 数
+	MaxSpeed       float64 `json:"maxSpeed"`       // 测到的最高下载速度 MB/s
+	Reason         string  `json:"reason"`         // 直接原因
+	Suggestion     string  `json:"suggestion"`     // 建议操作
 }
 
 // ProgressInfo 是进度信息。
@@ -361,7 +366,7 @@ func (a *App) runTest(cfg Config) {
 	task.ResetCancel()
 	applyConfig(cfg)
 
-	var totalTargets int
+	var totalTargets, probePassed int
 	task.ProgressHook = func(e task.ProgressEvent) {
 		if e.Stage == "ping" && e.Total > totalTargets {
 			totalTargets = e.Total
@@ -470,14 +475,65 @@ func (a *App) runTest(cfg Config) {
 		}
 	}
 
+	// 域名探测：先用 /cdn-cgi/trace 剔除不服务该域名的 IP
+	// 该路径绕过 Worker，不消耗 Workers 请求配额
+	if cfg.ProbeEnabled && cfg.ProbeDomain != "" {
+		base := task.LoadTargets()
+		totalTargets = len(base)
+		a.appendLog("info", "probe", fmt.Sprintf(
+			"开始域名探测 | 目标=%d 域名=%s", totalTargets, cfg.ProbeDomain))
+
+		a.mu.Lock()
+		a.phase = "probe"
+		a.mu.Unlock()
+		a.emit("test:phase", "probe")
+
+		probed := task.ProbeDomain(base, cfg.ProbeDomain, func(done, total int) {
+			task.ProgressHook(task.ProgressEvent{
+				Stage: "probe", Current: done, Total: total,
+			})
+		})
+		probePassed = len(probed)
+		task.OverrideTargets = probed
+
+		a.appendLog("info", "probe", fmt.Sprintf(
+			"域名探测完成 | %d → %d 个（剔除 %d 个）",
+			totalTargets, probePassed, totalTargets-probePassed))
+
+		if len(probed) == 0 {
+			d := &Diagnosis{
+				TotalTargets: totalTargets,
+				ProbePassed:  0,
+				Reason:       fmt.Sprintf("加载到 %d 个目标，但没有一个能服务域名 %s", totalTargets, cfg.ProbeDomain),
+				Suggestion:   "确认该域名已绑定到 Worker/Pages 且 DNS 托管在 Cloudflare；也可以清空「自定义测速域名」后再试",
+			}
+			a.appendLog("warn", "diagnosis", d.Reason+"；建议："+d.Suggestion)
+			a.mu.Lock()
+			a.phase = "done"
+			a.mu.Unlock()
+			a.emit("test:finished", map[string]any{
+				"results":   []ResultItem{},
+				"duration":  time.Since(start).Seconds(),
+				"diagnosis": d,
+			})
+			return
+		}
+	} else {
+		probePassed = -1 // 未启用探测
+	}
+
 	ping := task.NewPing()
-	pingAll := ping.Run()                             // 延迟测速：返回所有连通的 IP
+	pingAll := ping.Run() // 延迟测速：返回所有连通的 IP
 	availableCount := len(pingAll)
 	pingData := pingAll.FilterDelay().FilterLossRate() // 再按延迟/丢包条件过滤
 	afterDelay := len(pingData)
 
+	participated := totalTargets
+	if probePassed >= 0 {
+		participated = probePassed
+	}
 	a.appendLog("info", "ping", fmt.Sprintf(
-		"延迟测速完成 | 目标=%d 连通=%d 通过延迟/丢包过滤=%d", totalTargets, availableCount, afterDelay))
+		"延迟测速完成 | 参与=%d 连通=%d 通过延迟/丢包过滤=%d", participated, availableCount, afterDelay))
 
 	a.mu.Lock()
 	a.phase = "download"
@@ -521,7 +577,7 @@ func (a *App) runTest(cfg Config) {
 	}
 	// 结果为 0 时附带诊断信息，让界面能明确告诉用户卡在哪一步
 	if len(results) == 0 {
-		d := buildDiagnosis(cfg, totalTargets, availableCount, afterDelay, speedData)
+		d := buildDiagnosis(cfg, totalTargets, probePassed, availableCount, afterDelay, speedData)
 		finished["diagnosis"] = d
 		a.appendLog("warn", "diagnosis", d.Reason+"；建议："+d.Suggestion)
 	}
@@ -555,7 +611,8 @@ func applyConfig(cfg Config) {
 	if hasSource(cfg.Sources, sourceManual) {
 		task.IPText = cfg.IPText
 	}
-	task.ExtraTargets = nil // 在线优选 IP 由 runTest 抓取后填充
+	task.ExtraTargets = nil    // 在线优选 IP 由 runTest 抓取后填充
+	task.OverrideTargets = nil // 域名探测结果由 runTest 填充
 
 	utils.InputMaxDelay = time.Duration(cfg.MaxDelay) * time.Millisecond
 	utils.InputMinDelay = time.Duration(cfg.MinDelay) * time.Millisecond
@@ -567,9 +624,10 @@ func applyConfig(cfg Config) {
 }
 
 // buildDiagnosis 根据各阶段的数量，推断结果为空的具体原因并给出建议。
-func buildDiagnosis(cfg Config, totalTargets, available, afterDelay int, speedData utils.DownloadSpeedSet) *Diagnosis {
+func buildDiagnosis(cfg Config, totalTargets, probePassed, available, afterDelay int, speedData utils.DownloadSpeedSet) *Diagnosis {
 	d := &Diagnosis{
 		TotalTargets:   totalTargets,
+		ProbePassed:    probePassed,
 		Available:      available,
 		AfterDelay:     afterDelay,
 		DownloadTested: len(speedData),
@@ -584,6 +642,9 @@ func buildDiagnosis(cfg Config, totalTargets, available, afterDelay int, speedDa
 	case totalTargets == 0:
 		d.Reason = "没有加载到任何 IP 目标"
 		d.Suggestion = "确认 ip.txt 与 cfstx.exe 在同一目录，或至少勾选一个在线 IP 来源"
+	case probePassed == 0:
+		d.Reason = fmt.Sprintf("域名 %s 探测失败，所有 IP 都被剔除", cfg.ProbeDomain)
+		d.Suggestion = "确认该域名已绑定到 Worker/Pages 且 DNS 托管在 Cloudflare；也可以清空「自定义测速域名」后再试"
 	case available == 0:
 		d.Reason = "延迟测速中所有 IP 均未响应"
 		d.Suggestion = "检查网络连接；如果开着 VPN/代理请先关闭，测速需要直连每个目标 IP"

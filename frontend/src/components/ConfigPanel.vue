@@ -106,6 +106,31 @@ const customEnabled = computed(() => sources.value.includes('custom'))
           <div class="hint">仅 HTTPing 可用。按 IATA 机场码或国家码过滤节点地区。</div>
         </v-col>
       </v-row>
+
+      <v-divider class="my-3" />
+
+      <div class="toggle-row">
+        <div class="toggle-text">
+          <div class="toggle-label">自定义测速域名</div>
+          <div class="hint">
+            开启后会先用 <code>域名/cdn-cgi/trace</code> 探测哪些 IP 真正服务你的 Worker / Pages 域名，
+            自动剔除不适配的 IP（这类 IP 在代理客户端里会表现为连接超时）。
+            该路径绕过 Worker，<strong>不消耗 Workers 请求配额</strong>。
+          </div>
+        </div>
+        <v-switch v-model="config.probeEnabled" :disabled="disabled" density="compact" inset />
+      </div>
+
+      <v-text-field
+        v-if="config.probeEnabled"
+        v-model="config.probeDomain"
+        label="域名"
+        placeholder="例如：fast3.example.com"
+        :disabled="disabled"
+        density="compact"
+        prepend-inner-icon="mdi-web-check"
+        class="mt-1"
+      />
     </v-card>
 
     <!-- 过滤条件 -->
