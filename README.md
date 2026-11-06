@@ -1,4 +1,4 @@
-# CFSTX
+# CFSTXX
 
 > **本项目基于 [XIU2/CloudflareSpeedTest](https://github.com/XIU2/CloudflareSpeedTest) 二次开发**，遵循 GPL-3.0 许可证。感谢原作者 [XIU2](https://github.com/XIU2) 的开源工作。
 
@@ -24,73 +24,51 @@
 
 ### 下载运行
 
-1. 下载编译好的可执行文件（ [Github Releases](https://github.com/XIU2/CloudflareSpeedTest/releases) / [蓝奏云](https://xiu.lanzoub.com/b0742hkxe) ）并解压。  
-2. 双击运行 `cfst.exe` 文件（Windows 系统），等待测速完成...
-
-<details>
-<summary><code><strong>「 点击查看 Windows 系统下其他安装方式」</strong></code></summary>
-
-****
-
-如果你有 scoop(Windows 下的命令行安装程序)，则可以这样安装:
-
-```sh
-# 添加最多人使用的中文软件包仓库：dorado
-scoop bucket add dorado https://github.com/chawyehsu/dorado
-# 安装cloudflare-speedtest
-scoop install dorado/cloudflare-speedtest
-```
-
-</details>
+1. 下载编译好的可执行文件（ [Gitee Releases](https://gitee.com/liliaic/cfstx/releases) ）并解压。  
+2. 双击运行 `cfstx.exe` 文件（Windows 系统），等待测速完成...
 
 <details>
 <summary><code><strong>「 点击查看 Linux / MAC 系统下的使用示例 」</strong></code></summary>
 
 ****
 
-以下命令仅为示例，版本号和文件名请前往 [**Releases**](https://github.com/XIU2/CloudflareSpeedTest/releases) 查看。
+以下命令仅为示例，版本号和文件名请前往 [**Releases**](https://gitee.com/liliaic/cfstx/releases) 查看。
 
-> MAC 下 CFST 的安装和使用方式是一样的，不过 MAC 可以通过其他方式来下载解压（也就是可以跳过下面的前几个步骤），但运行的话还是需要在终端中运行（注意别忘了 **赋予执行权限**）。
+> MAC 下 CFSTX 的安装和使用方式是一样的，不过 MAC 可以通过其他方式来下载解压（也就是可以跳过下面的前几个步骤），但运行的话还是需要在终端中运行（注意别忘了 **赋予执行权限**）。
 
 ``` yaml
 # 如果是第一次使用，则建议创建新文件夹（后续更新时，跳过该步骤）
-mkdir cfst
+mkdir cfstx
 
 # 进入文件夹（后续更新，只需要从这里重复下面的下载、解压命令即可）
-cd cfst
+cd cfstx
 
-# 下载 CFST 压缩包（这个地址是始终指向最新版本，可自行根据需求替换 URL 末尾的 [文件名]）
-wget -N https://github.com/XIU2/CloudflareSpeedTest/releases/latest/download/cfst_linux_amd64.tar.gz
-# 如果你是在国内网络环境中下载，那么请使用下面这几个镜像加速之一：
-# wget -N https://wget.la/https://github.com/XIU2/CloudflareSpeedTest/releases/latest/download/cfst_linux_amd64.tar.gz
-# wget -N https://ghfast.top/https://github.com/XIU2/CloudflareSpeedTest/releases/latest/download/cfst_linux_amd64.tar.gz
-# wget -N https://ghproxy.it/https://github.com/XIU2/CloudflareSpeedTest/releases/latest/download/cfst_linux_amd64.tar.gz
-# wget -N https://gh-proxy.org/https://github.com/XIU2/CloudflareSpeedTest/releases/latest/download/cfst_linux_amd64.tar.gz
-# wget -N https://cdn.gh-proxy.org/https://github.com/XIU2/CloudflareSpeedTest/releases/latest/download/cfst_linux_amd64.tar.gz
-# 如果下载失败的话，尝试删除 -N 参数（如果是为了更新，则记得提前删除旧压缩包 rm cfst_linux_amd64.tar.gz ）
-# 如果要下载特定版本的，可以改用这种，例如：wget -N https://github.com/XIU2/CloudflareSpeedTest/releases/download/v2.3.4/cfst_linux_amd64.tar.gz
+# 下载 CFSTX 压缩包（这个地址是始终指向最新版本，可自行根据需求替换 URL 末尾的 [文件名]）
+wget -N https://gitee.com/liliaic/cfstx/releases/latest/download/cfstx_linux_amd64.tar.gz
+# 如果下载失败的话，尝试删除 -N 参数（如果是为了更新，则记得提前删除旧压缩包 rm cfstx_linux_amd64.tar.gz ）
+# 如果要下载特定版本的，可以改用这种，例如：wget -N https://gitee.com/liliaic/cfstx/releases/download/v2.3.4/cfstx_linux_amd64.tar.gz
 
 # 解压（不需要删除旧文件，会直接覆盖，自行根据需求替换 文件名）
-tar -zxf cfst_linux_amd64.tar.gz
+tar -zxf cfstx_linux_amd64.tar.gz
 
 # 赋予执行权限
-chmod +x cfst
+chmod +x cfstx
 
 # 运行（不带参数）
-./cfst
+./cfstx
 
 # 运行（带参数示例）
-./cfst -tl 200 -dn 20
+./cfstx -tl 200 -dn 20
 ```
 
-> 如果平**均延迟非常低**（如 0.xx），则说明 CFST **测速时走了代理**，请先关闭代理软件后再测速。  
+> 如果平**均延迟非常低**（如 0.xx），则说明 CFSTX **测速时走了代理**，请先关闭代理软件后再测速。  
 > 如果在**路由器**上运行，建议先关闭路由器内的代理（或将其排除），否则测速结果可能会**不准确/无法使用**。
 
 </details>
 
 ****
 
-> _在**手机**上独立运行 CFST 测速的简单教程：**[Android](https://github.com/XIU2/CloudflareSpeedTest/discussions/61)、[Android APP](https://github.com/Hsia97/CFSTAPP)、[Android APP](https://github.com/xianshenglu/cloudflare-ip-tester-app)、[IOS](https://github.com/XIU2/CloudflareSpeedTest/discussions/321)**_
+> _在**手机**上独立运行 CFSTX 测速的简单教程：**[Android](https://github.com/XIU2/CloudflareSpeedTest/discussions/61)、[Android APP](https://github.com/Hsia97/CFSTAPP)、[Android APP](https://github.com/xianshenglu/cloudflare-ip-tester-app)、[IOS](https://github.com/XIU2/CloudflareSpeedTest/discussions/321)**_
 
 > [!NOTE]
 > 注意！本软件仅适用于网站，**不支持给使用 UDP 协议的 Cloudflare WARP 优选 IP**，具体见：[#392](https://github.com/XIU2/CloudflareSpeedTest/discussions/392)
@@ -113,7 +91,7 @@ IP 地址           已发送  已接收  丢包率  平均延迟  下载速度(
 172.67.58.91      4      4       0.00   140.19    9.14           SJC
 ...
 
-# 如果平均延迟非常低（如 0.xx），则说明 CFST 测速时走了代理，请先关闭代理软件后再测速。
+# 如果平均延迟非常低（如 0.xx），则说明 CFSTX 测速时走了代理，请先关闭代理软件后再测速。
 # 如果在路由器上运行，请先关闭路由器内的代理（或将其排除），否则测速结果可能会不准确/无法使用。
 
 # 因为每次测速都是在每个 IP 段中随机 IP，所以每次的测速结果都不可能相同，这是正常的！
@@ -141,7 +119,7 @@ IP 地址,已发送,已接收,丢包率,平均延迟,下载速度(MB/s),地区�
 ```
 
 > [!NOTE]
-> _如果你发现**下载速度为 0.00**，那么可以用**调试模式 `-debug`** 排查一下，详见：[**# 下载测速都是 0.00 ？**](https://github.com/XIU2/CloudflareSpeedTest#-%E4%B8%8B%E8%BD%BD%E6%B5%8B%E9%80%9F%E9%83%BD%E6%98%AF-000-)_
+> _如果你发现**下载速度为 0.00**，那么可以用**调试模式 `-debug`** 排查一下，详见：[**# 下载测速都是 0.00 ？**](https://gitee.com/liliaic/cfstx#-%E4%B8%8B%E8%BD%BD%E6%B5%8B%E9%80%9F%E9%83%BD%E6%98%AF-000-)_
 
 > _大家可以按自己需求，对完整结果**进一步筛选处理**，或者去看一看进阶使用**指定过滤条件**！_
 
@@ -151,11 +129,11 @@ IP 地址,已发送,已接收,丢包率,平均延迟,下载速度(MB/s),地区�
 直接运行使用的是默认参数，如果想要**更好更高效的寻找最适合自己的** IP，那么就需要善用各个参数的搭配组合：
 
 ```Dart
-C:\>cfst -h
+C:\>cfstx -h
 
-CloudflareSpeedTest vX.X.X
+CFSTX vX.X.X
 测试各个 CDN 或网站所有 IP 的延迟和速度，获取最快 IP (IPv4+IPv6)！
-https://github.com/XIU2/CloudflareSpeedTest
+https://gitee.com/liliaic/cfstx
 
 参数：
     -n 200
@@ -235,7 +213,7 @@ https://github.com/XIU2/CloudflareSpeedTest
 > 该示例把常用参数都给加上了，即为：`-tll 40 -tl 150 -sl 1 -dn 5`，最后输出结果如下：
 
 ```python
-# XIU2/CloudflareSpeedTest vX.X.X
+# XIU2/CFSTX vX.X.X
 
 开始延迟测速（模式：TCP, 端口：443, 范围：40 ~ 150 ms, 丢包：1.00)
 321 / 321 [-----------------------------------------------------------] 可用: 30
@@ -252,10 +230,10 @@ XXX.XXX.XXX.XXX   4      3       0.25   149.59    1.04           N/A
 
 ****
 
-> 刚接触 CFST 的人，可能会迷惑**明明延迟测速可用 IP 有 30 个，怎么最后只剩下 3 个了呢？**  
+> 刚接触 CFSTX 的人，可能会迷惑**明明延迟测速可用 IP 有 30 个，怎么最后只剩下 3 个了呢？**  
 > 下载测速里的队列又是什么意思？难道我下载测速还要排队？
 
-CFST 会先延迟测速，在这过程中进度条右侧会实时显示可用 IP 数量（`可用: 30`），但注意该可用数量指的是**测试通过没有超时的 IP 数量**，和延迟上下限、丢包条件无关。当延迟测速完成后，因为还指定了**延迟上下限、丢包**的条件，所以按照条件过滤后只剩下 `10` 个了（也就是等待下载测速的 `队列：10`）。
+CFSTX 会先延迟测速，在这过程中进度条右侧会实时显示可用 IP 数量（`可用: 30`），但注意该可用数量指的是**测试通过没有超时的 IP 数量**，和延迟上下限、丢包条件无关。当延迟测速完成后，因为还指定了**延迟上下限、丢包**的条件，所以按照条件过滤后只剩下 `10` 个了（也就是等待下载测速的 `队列：10`）。
 
 即以上示例中，`321` 个 IP 延迟测速完成后，只有 `30` 个 IP 测试通过没有超时，然后根据延迟上下限范围：`40 ~ 150 ms` 及丢包上限条件过滤后，只剩下 `10` 个满足要求的 IP 了。如果你 `-dd` 禁用了下载测速，那么就会直接输出这 `10` 个 IP 了。当然该示例并未禁用，因此接下来软件会继续对这 `10` 个 IP 进行下载测速（`队列：10`）。
 
@@ -277,7 +255,7 @@ CFST 会先延迟测速，在这过程中进度条右侧会实时显示可用 IP
 
 还有一种情况，那就是当可用 IP 很多时（几百几千），你还设置了下载速度条件，那么可能就会遇到：**怎么下载测速进度条老是卡在 `X / 5` 了呢？**
 
-这其实并不是卡住了，而是只有当找到一个满足条件的 IP 时，进度条才会 +1，因此如果一直找不到，那么 CFST 就会一直下载测速下去，因此在表现为进度条卡住不动，但这也是在提醒你：你设置的下载速度条件对你来说已经高于实际了，你需要适当调低预期。
+这其实并不是卡住了，而是只有当找到一个满足条件的 IP 时，进度条才会 +1，因此如果一直找不到，那么 CFSTX 就会一直下载测速下去，因此在表现为进度条卡住不动，但这也是在提醒你：你设置的下载速度条件对你来说已经高于实际了，你需要适当调低预期。
 
 ****
 
@@ -289,7 +267,7 @@ CFST 会先延迟测速，在这过程中进度条右侧会实时显示可用 IP
 
 另外，如果全部队列 IP 都测速完了，但一个满足下载速度条件的 IP 都没有，你可能需要调低预期的下载测速下限条件，但你需要知道当前的大概测速速度都在什么范围，那么你就可以加上 `-debug` 参数开启调试模式，这样再遇到这种情况时，就会**忽略条件返回所有测速结果**，你就能看到这些 IP 的下载速度都有多少，心里也就有数了，然后**适当调低 `-sl` 再试试**。
 
-> 注意，如果你**没有指定**下载测速下限 `-sl` 条件，那么无论什么情况下 CFST 都会**输出所有测速结果**。
+> 注意，如果你**没有指定**下载测速下限 `-sl` 条件，那么无论什么情况下 CFSTX 都会**输出所有测速结果**。
 
 同样，延迟测速方面，`可用: 30`、`队列：10` 这两个数值也可以让你清楚，你设置的延迟条件对你来说是否过于苛刻。如果可用 IP 一大堆，但条件过滤后只剩下 2、3 个，那不用说就知道需要**调低预期的延迟/丢包条件**了。
 
@@ -305,8 +283,8 @@ Windows 要指定参数需要在 CMD 中运行，或者把参数添加到快捷�
 
 > [!TIP]
 > - 各参数均有**默认值**，当使用默认值时参数可以省略（**按需选择**），参数**不分前后顺序**。  
-> - Windows **PowerShell** 只需把下面命令中的 `cfst` 改为 `.\cfst` 即可。  
-> - Linux / macOS 系统只需要把下面命令中的 `cfst` 改为 `./cfst` 即可。
+> - Windows **PowerShell** 只需把下面命令中的 `cfstx` 改为 `.\cfstx` 即可。  
+> - Linux / macOS 系统只需要把下面命令中的 `cfstx` 改为 `./cfstx` 即可。
 
 ****
 
@@ -319,22 +297,22 @@ Windows 要指定参数需要在 CMD 中运行，或者把参数添加到快捷�
 
 ****
 
-很多人打开 CMD 直接就以**绝对路径**运行 CFST 会报错，这是因为默认的 `-f ip.txt` 参数是相对路径，需要指定绝对路径的 ip.txt 才行，但这样毕竟太麻烦了，因此还是建议进入 CFST 程序目录下，以**相对路径**方式运行：
+很多人打开 CMD 直接就以**绝对路径**运行 CFSTX 会报错，这是因为默认的 `-f ip.txt` 参数是相对路径，需要指定绝对路径的 ip.txt 才行，但这样毕竟太麻烦了，因此还是建议进入 CFSTX 程序目录下，以**相对路径**方式运行：
 
 **方式 一**：
-1. 打开 CFST 程序所在目录  
+1. 打开 CFSTX 程序所在目录  
 2. 空白处按下 <kbd>Shift + 鼠标右键</kbd> 显示右键菜单  
 3. 选择 **\[在此处打开命令窗口\]** 来打开 CMD 窗口，此时默认就位于当前目录下  
-4. 输入带参数的命令，如：`cfst -tl 200 -dn 20` 即可运行
+4. 输入带参数的命令，如：`cfstx -tl 200 -dn 20` 即可运行
 
 **方式 二**：
-1. 打开 CFST 程序所在目录  
+1. 打开 CFSTX 程序所在目录  
 2. 直接在文件夹地址栏中全选(或清空)并输入 `cmd` 回车就能打开 CMD 窗口，此时默认就位于当前目录下  
-4. 输入带参数的命令，如：`cfst -tl 200 -dn 20` 即可运行
+4. 输入带参数的命令，如：`cfstx -tl 200 -dn 20` 即可运行
 
-> 当然你也可以随便打开一个 CMD 窗口，然后输入如 `cd /d "D:\Program Files\cfst"` 来进入程序目录
+> 当然你也可以随便打开一个 CMD 窗口，然后输入如 `cd /d "D:\Program Files\cfstx"` 来进入程序目录
 
-> **提示**：如果用的是 **PowerShell** 只需把命令中的 `cfst` 改为 `.\cfst` 即可。  
+> **提示**：如果用的是 **PowerShell** 只需把命令中的 `cfstx` 改为 `.\cfstx` 即可。  
 > **注意**：在 **PowerShell** 下使用 `-o ""` 会被忽略掉空参数导致报错，可加个空格 `-o " "` 解决
 
 </details>
@@ -350,14 +328,14 @@ Windows 要指定参数需要在 CMD 中运行，或者把参数添加到快捷�
 
 ****
 
-右键 `cfst.exe` 文件 - **\[创建快捷方式\]**，然后右键该快捷方式 - **\[属性\]**，修改其**目标**：
+右键 `cfstx.exe` 文件 - **\[创建快捷方式\]**，然后右键该快捷方式 - **\[属性\]**，修改其**目标**：
 
 ``` bash
 # 如果要不输出结果文件，那么请加上 -o " "，引号里的是空格（不加空格会导致该空参数被忽略从而报错）。
-D:\ABC\cfst\cfst.exe -tl 200 -dn 20 -o " "
+D:\ABC\cfstx\cfstx.exe -tl 200 -dn 20 -o " "
 
 # 如果文件路径包含引号，则需要把启动参数放在引号外面，记得引号和 - 之间有空格。
-"D:\Program Files\cfst\cfst.exe" -tl 200 -dn 20 -o " "
+"D:\Program Files\cfstx\cfstx.exe" -tl 200 -dn 20 -o " "
 
 # 注意！快捷方式 - 起始位置 不能是空的，否则就会因为绝对路径而找不到 ip.txt 文件
 ```
@@ -374,14 +352,14 @@ D:\ABC\cfst\cfst.exe -tl 200 -dn 20 -o " "
 ****
 ``` bash
 # 指定自带的 IPv4 数据文件可测速这些 IPv4 地址（-f 默认值就是 ip.txt，所以该参数可省略）
-cfst -f ip.txt
+cfstx -f ip.txt
 
 # 指定自带的 IPv6 数据文件可测速这些 IPv6 地址
 # 另外，v2.1.0 版本后支持 IPv4+IPv6 混合测速并移除了 -ipv6 参数，因此一个文件内可以同时包含 IPv4+IPv6 地址
-cfst -f ipv6.txt
+cfstx -f ipv6.txt
 
 # 也可以直接通过参数指定要测速的 IP
-cfst -ip 1.1.1.1,2606:4700::/32
+cfstx -ip 1.1.1.1,2606:4700::/32
 ```
 
 > 测速 IPv6 时，可能会注意到每次测速数量都不一样，了解原因： [#120](https://github.com/XIU2/CloudflareSpeedTest/issues/120)  
@@ -411,18 +389,18 @@ HTTP 协议适用于快速测试某域名指向某 IP 时是否可以访问，�
 
 ``` bash
 # 只需加上 -httping 参数即可切换到 HTTP 协议延迟测速模式
-cfst -httping
+cfstx -httping
 
 # 软件会根据访问时网页返回的有效 HTTP 状态码来判断可用性（当然超时也算），默认对返回 200 301 302 这三个 HTTP 状态码的视为有效，可以手动指定认为有效的 HTTP 状态码，但只能指定一个（你需要提前确定测试地址正常情况下会返回哪个状态码）
-cfst -httping -httping-code 200
+cfstx -httping -httping-code 200
 
 # 通过 -url 参数来指定 HTTPing 测试地址（可以是任意网页 URL，不局限于具体文件地址）
-cfst -httping -url https://cf.xiu2.xyz/url
+cfstx -httping -url https://cf.xiu2.xyz/url
 # 如果你要 HTTPing 测试其他网站/CDN，那么指定一个该网站/使用该 CDN 的地址（因为软件默认地址是 Cloudflare 的，只能用于测试 Cloudflare 的 IP）
 
 # 注意：如果测速地址为 HTTP 协议，记得加上 -tp 80（这个参数会影响 延迟测速/下载测速 时使用的端口）
 # 同理，如果要测速 80 端口，那么也需要加上 -url 参数来指定一个 http:// 协议的地址才行（且该地址不会强制重定向至 HTTPS），如果是非 80 443 端口，那么需要确定该下载测速地址是否支持通过该端口访问。
-cfst -httping -tp 80 -url http://cdn.cloudflare.steamstatic.com/steam/apps/5952/movie_max.webm
+cfstx -httping -tp 80 -url http://cdn.cloudflare.steamstatic.com/steam/apps/5952/movie_max.webm
 ```
 
 </details>
@@ -463,7 +441,7 @@ Cloudflare CDN 的节点 IP 是 Anycast IP，即每个 IP 对应的服务器节�
 # 如果延迟测速后结果为 0，则说明没有找到任何一个（未超时可用的）指定地区的 IP。
 # 节点地区名为当地 IATA 机场地区码或国家/城市码，指定多个时用英文逗号分隔，v2.2.3 版本后支持小写
 
-cfst -httping -cfcolo HKG,KHH,NRT,LAX,SEA,SJC,FRA,MAD
+cfstx -httping -cfcolo HKG,KHH,NRT,LAX,SEA,SJC,FRA,MAD
 
 # 注意，该参数只有在 HTTPing 延迟测速模式下才可用（因为软件是通过 HTTP 链接中的响应头来获得该 IP 的实际地区码）
 
@@ -486,37 +464,37 @@ cfst -httping -cfcolo HKG,KHH,NRT,LAX,SEA,SJC,FRA,MAD
 
 ``` bash
 # 指定 IPv4 数据文件，不显示结果直接退出，输出结果到文件（-p 值为 0）
-cfst -f 1.txt -p 0 -dd
+cfstx -f 1.txt -p 0 -dd
 
 # 指定 IPv4 数据文件，不输出结果到文件，直接显示结果（-p 值为 10 条，-o 值为空但引号不能少）
-cfst -f 2.txt -o "" -p 10 -dd
+cfstx -f 2.txt -o "" -p 10 -dd
 
 # 指定 IPv4 数据文件 及 输出结果到文件（相对路径，即当前目录下，如含空格请加上引号）
-cfst -f 3.txt -o result.txt -dd
+cfstx -f 3.txt -o result.txt -dd
 
 
 # 指定 IPv4 数据文件 及 输出结果到文件（相对路径，即当前目录内的 abc 文件夹下，如含空格请加上引号）
-# Linux（CFST 程序所在目录内的 abc 文件夹下）
-./cfst -f abc/3.txt -o abc/result.txt -dd
+# Linux（CFSTX 程序所在目录内的 abc 文件夹下）
+./cfstx -f abc/3.txt -o abc/result.txt -dd
 
 # Windows（注意是反斜杠）
-cfst -f abc\3.txt -o abc\result.txt -dd
+cfstx -f abc\3.txt -o abc\result.txt -dd
 
 
 # 指定 IPv4 数据文件 及 输出结果到文件（绝对路径，即 C:\abc\ 目录下，如含空格请加上引号）
 # Linux（/abc/ 目录下）
-./cfst -f /abc/4.txt -o /abc/result.csv -dd
+./cfstx -f /abc/4.txt -o /abc/result.csv -dd
 
 # Windows（注意是反斜杠）
-cfst -f C:\abc\4.txt -o C:\abc\result.csv -dd
+cfstx -f C:\abc\4.txt -o C:\abc\result.csv -dd
 
 
-# 如果要以【绝对路径】运行 CFST，那么 -f / -o 参数中的文件名也必须是【绝对路径】，否则会报错找不到文件！
+# 如果要以【绝对路径】运行 CFSTX，那么 -f / -o 参数中的文件名也必须是【绝对路径】，否则会报错找不到文件！
 # Linux（/abc/ 目录下）
-/abc/cfst -f /abc/4.txt -o /abc/result.csv -dd
+/abc/cfstx -f /abc/4.txt -o /abc/result.csv -dd
 
 # Windows（注意是反斜杠）
-C:\abc\cfst -f C:\abc\4.txt -o C:\abc\result.csv -dd
+C:\abc\cfstx -f C:\abc\4.txt -o C:\abc\result.csv -dd
 ```
 </details>
 
@@ -533,7 +511,7 @@ C:\abc\cfst -f C:\abc\4.txt -o C:\abc\result.csv -dd
 # 如果你想要测速非默认 443 的其他端口，则需要通过 -tp 参数指定（该参数会影响 延迟测速/下载测速 时使用的端口）
 
 # 如果要延迟测速 80 端口+下载测速（如果 -dd 禁用了下载测速则不需要），那么还需要指定 http:// 协议的下载测速地址才行（且该地址不会强制重定向至 HTTPS，因为那样就变成 443 端口了）
-cfst -tp 80 -url http://speed.cloudflare.com/__down?bytes=99999999
+cfstx -tp 80 -url http://speed.cloudflare.com/__down?bytes=99999999
 
 # 如果是非 80 443 的其他端口，那么需要确定你使用的下载测速地址是否支持通过该非标端口访问。
 ```
@@ -553,10 +531,10 @@ cfst -tp 80 -url http://speed.cloudflare.com/__down?bytes=99999999
 # 该参数适用于下载测速 及 HTTP 协议的延迟测速，对于后者该地址可以是任意网页 URL（不局限于具体文件地址）
 
 # 地址要求：可以直接下载、文件大小超过 200MB、用的是 Cloudflare CDN
-cfst -url https://cf.xiu2.xyz/url
+cfstx -url https://cf.xiu2.xyz/url
 
 # 注意：如果测速地址为 HTTP 协议（该地址不能强制重定向至 HTTPS），记得加上 -tp 80（这个参数会影响 延迟测速/下载测速 时使用的端口），如果是非 80 443 端口，那么需要确定下载测速地址是否支持通过该端口访问。
-cfst -tp 80 -url http://speed.cloudflare.com/__down?bytes=99999999
+cfstx -tp 80 -url http://speed.cloudflare.com/__down?bytes=99999999
 ```
 
 </details>
@@ -577,7 +555,7 @@ cfst -tp 80 -url http://speed.cloudflare.com/__down?bytes=99999999
 ``` bash
 # 平均延迟上限：200 ms，下载速度下限：0 MB/s
 # 即找到平均延迟低于 200 ms 的 IP，然后再按延迟从低到高进行 10 次下载测速
-cfst -tl 200
+cfstx -tl 200
 ```
 
 > 如果**没有找到一个满足延迟**条件的 IP，那么不会输出任何内容。
@@ -589,7 +567,7 @@ cfst -tl 200
 ``` bash
 # 平均延迟上限：200 ms，下载速度下限：0 MB/s，数量：不知道多少 个
 # 即只输出低于 200ms 的 IP，且不再下载测速（因为不再下载测速，所以 -dn 参数就无效了）
-cfst -tl 200 -dd
+cfstx -tl 200 -dd
 ```
 
 ****
@@ -599,7 +577,7 @@ cfst -tl 200 -dd
 ``` bash
 # 平均延迟下限：60 ms，平均延迟下限：200 ms，下载速度下限：0 MB/s
 # 即找到平均延迟高于 60 ms 且低于 200 ms 的 IP（也就是 60~200ms 之间的），然后再按延迟从低到高进行 10 次下载测速
-cfst -tll 60 -tl 200
+cfstx -tll 60 -tl 200
 ```
 
 > 可能很多纳闷延迟不是越低越好吗？为什么还要丢掉低延迟的 IP ？  
@@ -614,7 +592,7 @@ cfst -tll 60 -tl 200
 ``` bash
 # 丢包几率上限：0.25
 # 即找到丢包率低于等于 0.25 的 IP，范围 0.00~1.00，如果 -tlr 0 则代表过滤掉任何丢包的 IP
-cfst -tlr 0.25
+cfstx -tlr 0.25
 ```
 
 ****
@@ -624,11 +602,11 @@ cfst -tlr 0.25
 ``` bash
 # 平均延迟上限：9999 ms，下载速度下限：5 MB/s，数量：10 个（可选）
 # 即需要找到 10 个平均延迟低于 9999 ms 且下载速度高于 5 MB/s 的 IP 才会停止测速
-cfst -sl 5 -dn 10
+cfstx -sl 5 -dn 10
 ```
 
 > 如果**没有找到一个满足速度**条件的 IP，那么不会输出任何内容，你可能需要调低预期的下载测速下限条件，但你需要知道当前的大概测速速度都在什么范围，那么你就可以加上 `-debug` 参数开启调试模式，这样再遇到这种情况时，就会**忽略条件返回所有测速结果**，你就能看到这些 IP 的下载速度都有多少，心里也就有数了，然后**适当调低 `-sl` 再试试**。  
-> 注意，如果你**没有指定**下载测速下限 `-sl` 条件，那么无论什么情况下 CFST 都会**输出所有测速结果**。
+> 注意，如果你**没有指定**下载测速下限 `-sl` 条件，那么无论什么情况下 CFSTX 都会**输出所有测速结果**。
 
 > 没有指定平均延迟上限时，如果一直**凑不够**满足条件的 IP 数量，就会**一直测速**下去。  
 > 建议**同时指定 [下载速度下限] + [平均延迟上限]**，这样测速到指定延迟上限还没凑够数量，就会终止测速。
@@ -641,7 +619,7 @@ cfst -sl 5 -dn 10
 # 平均延迟上限、下载速度下限均支持小数（如 -sl 0.5）
 # 平均延迟上限：200 ms，下载速度下限：5.6 MB/s，数量：10 个（可选）
 # 即需要找到 10 个平均延迟低于 200 ms 且下载速度高于 5 .6MB/s 的 IP 才会停止测速
-cfst -tl 200 -sl 5.6 -dn 10
+cfstx -tl 200 -sl 5.6 -dn 10
 ```
 
 > 如果**没有找到一个满足延迟**条件的 IP，那么不会输出任何内容。  
@@ -692,12 +670,12 @@ cfst -tl 200 -sl 5.6 -dn 10
 **方式 一**：
 直接通过参数指定要测速的 IP 段数据。
 ``` bash
-# 先进入 CFST 所在目录，然后运行：
+# 先进入 CFSTX 所在目录，然后运行：
 # Windows 系统（在 CMD 中运行）
-cfst -ip 1.1.1.1,2.2.2.2/24,2606:4700::/32
+cfstx -ip 1.1.1.1,2.2.2.2/24,2606:4700::/32
 
 # Linux 系统
-./cfst -ip 1.1.1.1,2.2.2.2/24,2606:4700::/32
+./cfstx -ip 1.1.1.1,2.2.2.2/24,2606:4700::/32
 ```
 
 ****
@@ -716,15 +694,15 @@ cfst -ip 1.1.1.1,2.2.2.2/24,2606:4700::/32
 > 子网掩码 `/24` 指的是这个 IP 最后一段，即 `1.0.0.1~1.0.0.255`。
 
 
-然后运行 CFST 时加上启动参数 `-f 1.txt` 来指定 IP 段数据文件。
+然后运行 CFSTX 时加上启动参数 `-f 1.txt` 来指定 IP 段数据文件。
 
 ``` bash
-# 先进入 CFST 所在目录，然后运行：
+# 先进入 CFSTX 所在目录，然后运行：
 # Windows 系统（在 CMD 中运行）
-cfst -f 1.txt
+cfstx -f 1.txt
 
 # Linux 系统
-./cfst -f 1.txt
+./cfstx -f 1.txt
 
 # 对于 1.0.0.1/24 这样的 IP 段只会随机最后一段（1.0.0.1~255），如果要测速该 IP 段中的所有 IP，请加上 -allip 参数。
 ```
@@ -741,7 +719,7 @@ cfst -f 1.txt
 ****
 **\#\# 原理简单解释：**
 
-首先要明白，CFST 下载测速过程，本质上和你将 `IP 下载测速地址域名` 写入 hosts 文件，然后浏览器去访问下载测速地址是一样的，只不过软件将其自动化了（类似于 `curl -I --resolve 下载测速地址域名:443:IP https://下载测速地址`）。
+首先要明白，CFSTX 下载测速过程，本质上和你将 `IP 下载测速地址域名` 写入 hosts 文件，然后浏览器去访问下载测速地址是一样的，只不过软件将其自动化了（类似于 `curl -I --resolve 下载测速地址域名:443:IP https://下载测速地址`）。
 
 因此如果下载测速结果全都是 0.00 MB/s，那么代表**下载测速过程中出问题报错**，导致直接终止测速了（并最终显示为 0.00），就只有这几种可能性：
 
@@ -753,7 +731,7 @@ cfst -f 1.txt
 
 **\#\# 调试模式排查：**
 
-接下来**请务必**先在你原先使用的 CFST 运行命令后**追加一个 `-debug` 参数来开启调试模式**，重新跑一遍测速，这样下载测速过程中出现任何报错都会显示具体原因方便你排查。
+接下来**请务必**先在你原先使用的 CFSTX 运行命令后**追加一个 `-debug` 参数来开启调试模式**，重新跑一遍测速，这样下载测速过程中出现任何报错都会显示具体原因方便你排查。
 
 常见的下载测速失败报错原因有（因为是 Go 语言的原生报错信息，因此基本都是英文）：
 
@@ -773,7 +751,7 @@ cfst -f 1.txt
 这种代表**系统证书配置有问题**，导致 TLS 握手时无法验证证书，目前只在 Termux 内遇到过（解决方法见：https://github.com/XIU2/CloudflareSpeedTest/discussions/61 帖子末尾）
 
 > 如果你遇到了其他报错原因，且翻译后还是不懂，可以发 Issues 或 Discussions 询问，我也会更新到这里。  
-> 但注意，发 Issues 或 Discussions 询问时，请记得带上**调试模式下 CFST 输出的完整内容（或者完整截图）**。
+> 但注意，发 Issues 或 Discussions 询问时，请记得带上**调试模式下 CFSTX 输出的完整内容（或者完整截图）**。
 
 根据上面的报错原因排查一遍后，如果还是无法解决，那么可以尝试下面这些进一步排查：
 
@@ -797,7 +775,7 @@ cfst -f 1.txt
 
 **三、你的网络有问题**：
 
-这个就比较麻烦了，如果你现在是用电脑+宽带来使用 CFST 测速的，那么可以尝试关闭手机 WIFI 并打开流量，然后数据线连接电脑，设置好 USB 网络共享（不同手机系统不太一样，具体自行搜索哈），并拔掉电脑的网线，这样你的电脑现在就是走的手机流量数据网络了（如果手机流量数据和宽带不是一个运营商会更好排查），然后再次运行 CFST 测速看看结果是否改变（也可以同时尝试上面的排查方法来交叉验证）。
+这个就比较麻烦了，如果你现在是用电脑+宽带来使用 CFSTX 测速的，那么可以尝试关闭手机 WIFI 并打开流量，然后数据线连接电脑，设置好 USB 网络共享（不同手机系统不太一样，具体自行搜索哈），并拔掉电脑的网线，这样你的电脑现在就是走的手机流量数据网络了（如果手机流量数据和宽带不是一个运营商会更好排查），然后再次运行 CFSTX 测速看看结果是否改变（也可以同时尝试上面的排查方法来交叉验证）。
 
 如果测速结果正常了，那么显然就是宽带网络的问题，如果还是一样的 0.00，那么就麻烦了。。。
 
@@ -829,40 +807,36 @@ cfst -f 1.txt
 如果没找到类似问题，请新开个 [**Issues**](https://github.com/XIU2/CloudflareSpeedTest/issues/new) 来告诉我！
 
 > [!NOTE]
-> **注意**！_与 CFST 本身 `反馈问题、功能建议` 无关的，请前往项目内部 论坛 讨论（顶部的 `💬 Discussions`_  
+> **注意**！_与 CFSTX 本身 `反馈问题、功能建议` 无关的，请前往项目内部 论坛 讨论（顶部的 `💬 Discussions`_  
 
 ****
-
-## 如果帮到你的话就 "打赏" 一下吧~🎉✨
-
-![微信赞赏](https://github.com/XIU2/XIU2/blob/master/img/zs-01.png)![支付宝赞赏](https://github.com/XIU2/XIU2/blob/master/img/zs-02.png)
 
 ****
 
 ## 衍生项目
 
 - _[https://github.com/Hsia97/CFSTAPP](https://github.com/Hsia97/CFSTAPP)_  
-_**CFST 安卓版 APP [#638](https://github.com/XIU2/CloudflareSpeedTest/discussions/638)**_
+_**CFSTX 安卓版 APP [#638](https://github.com/XIU2/CloudflareSpeedTest/discussions/638)**_
 
 - _https://github.com/xianshenglu/cloudflare-ip-tester-app_  
-_**CFST 安卓版 APP [#202](https://github.com/XIU2/CloudflareSpeedTest/discussions/320)**_
+_**CFSTX 安卓版 APP [#202](https://github.com/XIU2/CloudflareSpeedTest/discussions/320)**_
 
 - _https://github.com/kimmax603/luci-app-cloudflarespeedtest_  
-_**CFST OpenWrt 路由器插件版 [#651](https://github.com/XIU2/CloudflareSpeedTest/issues/651)**_
+_**CFSTX OpenWrt 路由器插件版 [#651](https://github.com/XIU2/CloudflareSpeedTest/issues/651)**_
 
 - _https://github.com/immortalwrt-collections/openwrt-cdnspeedtest_  
-_**CFST OpenWrt 原生编译版本 [#64](https://github.com/XIU2/CloudflareSpeedTest/discussions/64)**_
+_**CFSTX OpenWrt 原生编译版本 [#64](https://github.com/XIU2/CloudflareSpeedTest/discussions/64)**_
 
 - _https://github.com/GuangYu-yu/CloudflareST-Rust_  
-_**CFST Rust 版本**_
+_**CFSTX Rust 版本**_
 
 - _https://github.com/masgzy/CloudflareST_  
-_**CFST 的分支衍生版本（依然是 Go）**_
+_**CFSTX 的分支衍生版本（依然是 Go）**_
 
 - _https://github.com/hoseinnikkhah/CloudflareSpeedTest-English_  
-_**English language version of CFST (Text language differences only) [#64](https://github.com/XIU2/CloudflareSpeedTest/issues/68)**_
+_**English language version of CFSTX (Text language differences only) [#64](https://github.com/XIU2/CloudflareSpeedTest/issues/68)**_
 
-> _此处仅收集了在本项目中宣传过的部分 CFST 相关衍生项目，如果有遗漏可以告诉我~_
+> _此处仅收集了在本项目中宣传过的部分 CFSTX 相关衍生项目，如果有遗漏可以告诉我~_
 
 ****
 
@@ -919,7 +893,7 @@ go build -ldflags "-s -w -X main.version=v1.0.0"
 SET version=v1.0.0
 SET GOOS=linux
 SET GOARCH=amd64
-go build -o Releases\cfst_linux_amd64\cfst -ldflags "-s -w -X main.version=%version%"
+go build -o Releases\cfstx_linux_amd64\cfstx -ldflags "-s -w -X main.version=%version%"
 ```
 
 ```bash
@@ -927,7 +901,7 @@ go build -o Releases\cfst_linux_amd64\cfst -ldflags "-s -w -X main.version=%vers
 version=v1.0.0
 GOOS=windows
 GOARCH=386
-go build -o Releases/cfst_windows_386/cfst.exe -ldflags "-s -w -X main.version=${version}"
+go build -o Releases/cfstx_windows_386/cfstx.exe -ldflags "-s -w -X main.version=${version}"
 ```
 
 </details>

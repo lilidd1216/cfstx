@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"gitee.com/liliaic/cfstx/task"
@@ -14,7 +15,8 @@ import (
 )
 
 var (
-	version, versionNew string
+	version    = "v1.0.0"
+	versionNew string
 )
 
 func init() {
@@ -159,7 +161,7 @@ func endPrint() {
 func checkUpdate() {
 	timeout := 10 * time.Second
 	client := http.Client{Timeout: timeout}
-	res, err := client.Get("https://api.xiu2.xyz/ver/cloudflarespeedtest.txt")
+	res, err := client.Get("https://gitee.com/liliaic/cfstx/raw/master/version.txt")
 	if err != nil {
 		return
 	}
@@ -170,7 +172,8 @@ func checkUpdate() {
 	}
 	// 关闭资源流
 	defer res.Body.Close()
-	if string(body) != version {
-		versionNew = string(body)
+	latest := strings.TrimSpace(string(body))
+	if latest != "" && latest != version {
+		versionNew = latest
 	}
 }

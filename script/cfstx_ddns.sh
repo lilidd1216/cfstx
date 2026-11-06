@@ -5,12 +5,12 @@ export PATH
 #	项目: CloudflareSpeedTest 自动更新域名解析记录
 #	版本: 1.0.5
 #	作者: XIU2
-#	项目: https://github.com/XIU2/CloudflareSpeedTest
+#	项目: https://gitee.com/liliaic/cfstx
 # --------------------------------------------------------------
 
 _READ() {
-	[[ ! -e "cfst_ddns.conf" ]] && echo -e "[错误] 配置文件不存在 [cfst_ddns.conf] !" && exit 1
-	CONFIG=$(cat "cfst_ddns.conf")
+	[[ ! -e "cfstx_ddns.conf" ]] && echo -e "[错误] 配置文件不存在 [cfstx_ddns.conf] !" && exit 1
+	CONFIG=$(cat "cfstx_ddns.conf")
 	FOLDER=$(echo "${CONFIG}"|grep 'FOLDER='|awk -F '=' '{print $NF}')
 	[[ -z "${FOLDER}" ]] && echo -e "[错误] 缺少配置项 [FOLDER] !" && exit 1
 	ZONE_ID=$(echo "${CONFIG}"|grep 'ZONE_ID='|awk -F '=' '{print $NF}')
@@ -32,15 +32,15 @@ _READ() {
 }
 
 _UPDATE() {
-	# 这里可以自己添加、修改 CFST 的运行参数
-	./cfst -o "result_ddns.txt"
+	# 这里可以自己添加、修改 CFSTX 的运行参数
+	./cfstx -o "result_ddns.txt"
 
 	# 判断结果文件是否存在，如果不存在说明结果为 0
-	[[ ! -e "result_ddns.txt" ]] && echo "CFST 测速结果 IP 数量为 0，跳过下面步骤..." && exit 0
+	[[ ! -e "result_ddns.txt" ]] && echo "CFSTX 测速结果 IP 数量为 0，跳过下面步骤..." && exit 0
 
 	CONTENT=$(sed -n "2,1p" result_ddns.txt | awk -F, '{print $1}')
 	if [[ -z "${CONTENT}" ]]; then
-		echo "CFST 测速结果 IP 数量为 0，跳过下面步骤..."
+		echo "CFSTX 测速结果 IP 数量为 0，跳过下面步骤..."
 		exit 0
 	fi
 	# 如果 EMAIL 变量是空的，那么就代表要使用 API 令牌方式

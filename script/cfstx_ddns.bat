@@ -2,18 +2,18 @@
 ::	项目: CloudflareSpeedTest 自动更新域名解析记录
 ::	版本: 1.0.6
 ::	作者: XIU2
-::	项目: https://github.com/XIU2/CloudflareSpeedTest
+::	项目: https://gitee.com/liliaic/cfstx
 :: --------------------------------------------------------------
 @echo off
 Setlocal Enabledelayedexpansion
 
-:: 这里可以自己添加、修改 CFST 的运行参数，echo.| 的作用是自动回车退出程序（不再需要加上 -p 0 参数了）
-echo.|cfst.exe -o "result_ddns.txt"
+:: 这里可以自己添加、修改 CFSTX 的运行参数，echo.| 的作用是自动回车退出程序（不再需要加上 -p 0 参数了）
+echo.|cfstx.exe -o "result_ddns.txt"
 
 :: 判断结果文件是否存在，如果不存在说明结果为 0
 if not exist result_ddns.txt (
     echo.
-    echo CFST 测速结果 IP 数量为 0，跳过下面步骤...
+    echo CFSTX 测速结果 IP 数量为 0，跳过下面步骤...
     goto :END
 )
 
@@ -21,7 +21,7 @@ for /f "skip=1 tokens=1 delims=," %%i in (result_ddns.txt) do (
     Echo %%i
     if "%%i"=="" (
         echo.
-        echo CFST 测速结果 IP 数量为 0，跳过下面步骤...
+        echo CFSTX 测速结果 IP 数量为 0，跳过下面步骤...
         goto :END
     )
 ::  API 密钥方式（全局权限）
