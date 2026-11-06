@@ -6,6 +6,8 @@ package main
 
 func removeWindowTitleBar(hwnd uintptr) {}
 
+func setWindowFrameStyle(hwnd uintptr) {}
+
 func startWindowDrag(hwnd uintptr) {}
 
 func minimizeWindow(hwnd uintptr) {}
