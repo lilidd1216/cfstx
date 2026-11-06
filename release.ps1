@@ -34,6 +34,12 @@ $iss = $iss -replace '#define MyAppVersion ".*"', "#define MyAppVersion `"$verNu
 
 # 3. 构建前端
 Write-Host "[2/6] 构建前端..." -ForegroundColor Cyan
+# esbuild 在系统 TEMP 目录偶尔会因权限问题删除临时文件失败（Access is denied），
+# 改用项目内的临时目录，避免构建中断
+$buildTemp = Join-Path $root "build\tmp"
+New-Item -ItemType Directory -Path $buildTemp -Force | Out-Null
+$env:TEMP = $buildTemp
+$env:TMP = $buildTemp
 Push-Location frontend
 npm run build
 New-Item -ItemType File "dist\.gitkeep" -Force | Out-Null

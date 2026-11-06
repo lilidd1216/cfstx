@@ -347,9 +347,13 @@ func LoadTargets() []*Target {
 		}
 	}
 
-	// 内置文件
+	// 内置文件（IPFile 可被 -f 参数或界面「更换文件」覆盖）
 	if SourceIPv4 {
-		ranges.loadFile(defaultInputFile)
+		name := IPFile
+		if name == "" {
+			name = defaultInputFile
+		}
+		ranges.loadFile(name)
 	}
 	if SourceIPv6 {
 		ranges.loadFile("ipv6.txt")

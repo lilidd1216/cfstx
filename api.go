@@ -62,6 +62,10 @@ func (a *API) handleAPI(w http.ResponseWriter, r *http.Request) {
 	case path == "/api/config/reset" && r.Method == http.MethodPost:
 		writeJSON(w, a.app.ResetConfig())
 
+	case path == "/api/proxy" && r.Method == http.MethodGet:
+		// 测速前检测系统代理，前端据此提示用户关闭代理
+		writeJSON(w, a.app.CheckProxy())
+
 	case path == "/api/test/start" && r.Method == http.MethodPost:
 		var cfg Config
 		if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {

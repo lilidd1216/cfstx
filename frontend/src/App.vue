@@ -27,7 +27,7 @@ const config = ref({
   testCount: 10,
   disableDownload: false,
   testAll: false,
-  url: 'https://speed.cloudflare.com/__down?bytes=1000000000',
+  url: 'https://speed.cloudflare.com/__down?bytes=90000000',
   outputFile: 'result.csv',
   printNum: 10,
   debug: false,
@@ -50,6 +50,10 @@ const diagnosisDialog = ref(false)
 const updateState = ref('idle') // idle | downloading | downloaded | installing
 const downloadProgress = ref(0)
 const downloadedPath = ref('')
+
+// 测速前检测到系统代理时弹出的提醒
+const proxyDialog = ref(false)
+const proxyInfo = ref(null)
 
 let timer = null
 let startedAt = 0
@@ -149,6 +153,11 @@ function toast(text, color = 'success') {
   snackbar.value = { show: true, text, color }
 }
 
+// 结果表格复制后的提示
+function handleCopied(msg) {
+  toast(msg, String(msg).startsWith('已复制') ? 'success' : 'error')
+}
+
 function startTimer() {
   stopTimer()
   startedAt = Date.now()
@@ -196,7 +205,84 @@ async function resetConfig() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 场景预设
+// ---------------------------------------------------------------------------
+
+const PRESET_LABELS = { beginner: '新手推荐', worker: 'Worker 专用', fast: '极速扫描' }
+
+// 只覆盖测速策略相关字段，保留用户已填的域名、文件路径、端口等
+const PRESET_CONFIGS = {
+  beginner: {
+    sources: ['ipv4', 'official'],
+    httping: true,
+    maxDelay: 200,
+    minDelay: 0,
+    maxLossRate: 0,
+    minSpeed: 0,
+    disableDownload: true,
+    probeEnabled: false,
+    testCount: 10,
+  },
+  worker: {
+    sources: ['ipv4', 'bestcf', 'official'],
+    httping: true,
+    maxDelay: 200,
+    minDelay: 0,
+    maxLossRate: 0,
+    minSpeed: 5,
+    disableDownload: false,
+    probeEnabled: true,
+    testCount: 10,
+  },
+  fast: {
+    sources: ['ipv4', 'bestcf'],
+    httping: true,
+    maxDelay: 300,
+    minDelay: 0,
+    maxLossRate: 1,
+    minSpeed: 0,
+    disableDownload: true,
+    probeEnabled: false,
+    testCount: 10,
+  },
+}
+
+function applyPreset(key) {
+  const patch = PRESET_CONFIGS[key]
+  if (!patch) return
+  config.value = { ...config.value, ...patch }
+  const name = PRESET_LABELS[key] || key
+  if (key === 'worker' && !config.value.probeDomain) {
+    toast(`已套用「${name}」，请填写你的域名`, 'warning')
+  } else {
+    toast(`已套用「${name}」预设`, 'info')
+  }
+}
+
+// 点击「开始测速」：先检测系统代理。
+// 走代理测出的延迟是到代理出口的，不能代表本地网络到 Cloudflare 的真实质量。
 async function start() {
+  try {
+    const p = await httpGet('/api/proxy')
+    if (p?.enabled) {
+      proxyInfo.value = p
+      proxyDialog.value = true
+      return
+    }
+  } catch (_) {
+    // 代理检测失败不阻塞测速
+  }
+  doStart()
+}
+
+// 用户在代理提醒中选择「仍然开始」
+function startAnyway() {
+  proxyDialog.value = false
+  doStart()
+}
+
+async function doStart() {
   running.value = true
   results.value = []
   phase.value = 'ping'
@@ -653,6 +739,7 @@ onBeforeUnmount(() => {
           @pick-ip-file="pickIpFile"
           @open-bestcf="openBestCF"
           @open-cmliu="openCmliu"
+          @apply-preset="applyPreset"
         />
 
         <!-- 结果 -->
@@ -662,6 +749,7 @@ onBeforeUnmount(() => {
           :loading="running"
           @export="exportCsv"
           @export-txt="exportTxt"
+          @copied="handleCopied"
         />
       </div>
     </v-main>
@@ -682,6 +770,33 @@ onBeforeUnmount(() => {
     >
       {{ snackbar.text }}
     </v-snackbar>
+
+    <!-- 检测到系统代理时的提醒 -->
+    <v-dialog v-model="proxyDialog" max-width="520">
+      <v-card class="diagnosis-card">
+        <v-card-title class="d-flex align-center py-4">
+          <v-icon color="warning" class="mr-2">mdi-shield-alert-outline</v-icon>
+          <span class="text-h6">检测到系统代理已开启</span>
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="py-5">
+          <div class="proxy-addr mono">{{ proxyInfo?.address }}</div>
+          <p class="text-body-2 mt-4" style="line-height: 1.75">
+            测速流量会经过系统代理。此时得到的<b>延迟</b>和<b>下载速度</b>反映的是
+            <b>你的电脑到代理出口</b>的情况，而不是本地网络直连 Cloudflare 的真实质量。
+          </p>
+          <p class="text-body-2 mt-2" style="line-height: 1.75">
+            如果要筛选用于<b>直连</b>的 IP，建议先关闭代理再测速。
+          </p>
+        </v-card-text>
+        <v-divider />
+        <v-card-actions class="py-3">
+          <v-spacer />
+          <v-btn variant="text" @click="proxyDialog = false">取消</v-btn>
+          <v-btn color="warning" variant="flat" @click="startAnyway">仍然开始</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
     <!-- 测速结果为 0 时的诊断弹窗 -->
     <v-dialog v-model="diagnosisDialog" max-width="600">
@@ -939,6 +1054,17 @@ onBeforeUnmount(() => {
 .diagnosis-card {
   background: #1b1b21 !important;
   border: 1px solid #2a2a33;
+}
+
+/* 系统代理提醒弹窗 */
+.proxy-addr {
+  display: inline-block;
+  padding: 5px 12px;
+  border-radius: 6px;
+  background: #26262e;
+  border: 1px solid #3a3a46;
+  color: #fbbf24;
+  font-size: 13px;
 }
 
 .diagnosis-reason {

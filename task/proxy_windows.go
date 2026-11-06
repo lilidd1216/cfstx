@@ -55,6 +55,18 @@ func systemProxyURL() *url.URL {
 	return u
 }
 
+// SystemProxyAddr 返回当前启用的 Windows 系统代理地址（如 127.0.0.1:7890）。
+//
+// 供界面在测速前提示用户：走代理测出的延迟反映的是到代理出口的情况，
+// 不能代表本地网络到 Cloudflare 的真实质量。
+// 未启用或读取失败时返回空字符串。
+func SystemProxyAddr() string {
+	if u := systemProxyURL(); u != nil {
+		return u.Host
+	}
+	return ""
+}
+
 // proxyValue 从 reg query 的文本输出中取出指定名称的值。
 // 输出形如：    ProxyEnable    REG_DWORD    0x1
 func proxyValue(text, name string) string {

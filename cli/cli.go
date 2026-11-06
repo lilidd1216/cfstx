@@ -16,6 +16,7 @@ func Run() {
 	var printVersion, bestcf, officialCIDR, cmliuCIDR bool
 	var minDelay, maxDelay, downloadTime int
 	var maxLossRate float64
+	var probeDomain string
 
 	help := `
 CFSTX ` + version.Current + `
@@ -66,6 +67,10 @@ CFSTX ` + version.Current + `
         Cloudflare官方IP段；从 api.cloudflare.com 获取官方发布的 IPv4/IPv6 网段并展开测速；(默认 关闭)
     -cmliu
         cmliu的CF-CIDR；使用社区维护的 Cloudflare 网段列表，覆盖面通常比官方更广；(默认 关闭)
+    -probe fast3.example.com
+        自定义测速域名；延迟测速前先用 <域名>/cdn-cgi/trace 探测哪些 IP 真正服务该域名，
+        自动剔除不适配的 IP（这类 IP 在客户端里会表现为大量连接超时）；
+        该路径由 Cloudflare 边缘节点直接响应，不消耗 Workers 请求配额；(默认 关闭)
     -o result.csv
         写入结果文件；如路径含有空格请加上引号；值为空时不写入文件 [-o ""]；(默认 result.csv)
 
@@ -108,6 +113,7 @@ CFSTX ` + version.Current + `
 	flag.BoolVar(&bestcf, "bestcf", false, "从 bestcf.pages.dev 获取在线优选 IP")
 	flag.BoolVar(&officialCIDR, "official", false, "使用 Cloudflare 官方 IP 段")
 	flag.BoolVar(&cmliuCIDR, "cmliu", false, "使用 cmliu 整理的 CF-CIDR 列表")
+	flag.StringVar(&probeDomain, "probe", "", "自定义测速域名，只保留服务该域名的 IP")
 
 	flag.BoolVar(&utils.Debug, "debug", false, "调试输出模式")
 
@@ -160,6 +166,31 @@ CFSTX ` + version.Current + `
 		} else {
 			task.ExtraTargets = targets
 			utils.Green.Printf("[信息] 在线 IP 已获取：%d 个（已按 IP 去重）\n", len(targets))
+		}
+	}
+
+	// 域名探测：剔除不服务指定域名的 IP
+	// /cdn-cgi/trace 由边缘节点直接响应，绕过 Worker，不消耗 Workers 配额
+	if probeDomain != "" {
+		base := task.LoadTargets()
+		if len(base) == 0 {
+			utils.Yellow.Println("[警告] 没有加载到任何 IP，跳过域名探测")
+		} else {
+			utils.Cyan.Printf("[信息] 开始域名探测：%s（目标 %d 个）\n", probeDomain, len(base))
+			last := 0
+			probed := task.ProbeDomain(base, probeDomain, func(done, total int) {
+				if done-last >= 500 || done == total {
+					last = done
+					utils.Cyan.Printf("\r[信息] 域名探测进度：%d / %d", done, total)
+				}
+			})
+			fmt.Println()
+			task.OverrideTargets = probed
+			utils.Green.Printf("[信息] 域名探测完成：%d → %d 个（剔除 %d 个）\n",
+				len(base), len(probed), len(base)-len(probed))
+			if len(probed) == 0 {
+				utils.Yellow.Println("[警告] 所有 IP 都不服务该域名，请确认域名已接入 Cloudflare 并绑定了 Worker/Pages")
+			}
 		}
 	}
 

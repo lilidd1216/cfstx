@@ -107,6 +107,19 @@ type Status struct {
 	Results  []ResultItem `json:"results"`
 }
 
+// ProxyStatus 描述当前系统代理状态。
+// 测速走代理时，延迟反映的是到代理出口的情况，不能代表本地网络质量。
+type ProxyStatus struct {
+	Enabled bool   `json:"enabled"`
+	Address string `json:"address"`
+}
+
+// CheckProxy 检测系统代理是否开启，供界面在开始测速前提示用户。
+func (a *App) CheckProxy() ProxyStatus {
+	addr := task.SystemProxyAddr()
+	return ProxyStatus{Enabled: addr != "", Address: addr}
+}
+
 // LogEntry 是一次测速过程中的一条日志。
 type LogEntry struct {
 	Time    string `json:"time"`

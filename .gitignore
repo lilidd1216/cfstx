@@ -3,6 +3,8 @@
 /Releases/
 /build/bin/
 /build/test/
+/build/tmp/
+/build/release-log.txt
 *.exe
 *.csv
 result.txt

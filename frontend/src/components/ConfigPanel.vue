@@ -5,9 +5,34 @@ const config = defineModel('config', { type: Object, required: true })
 const props = defineProps({
   running: { type: Boolean, default: false },
 })
-const emit = defineEmits(['pick-ip-file', 'open-bestcf', 'open-cmliu'])
+const emit = defineEmits(['pick-ip-file', 'open-bestcf', 'open-cmliu', 'apply-preset'])
 
 const disabled = computed(() => props.running)
+
+// 场景预设：覆盖大多数用户的实际用法，套用后仍可手动微调
+const presets = [
+  {
+    key: 'beginner',
+    icon: 'mdi-school-outline',
+    color: 'success',
+    label: '新手推荐',
+    desc: '内置 + 官方网段，只测延迟，最快出结果',
+  },
+  {
+    key: 'worker',
+    icon: 'mdi-cloud-outline',
+    color: 'primary',
+    label: 'Worker 专用',
+    desc: '开启域名探测，只保留真正服务你域名的 IP',
+  },
+  {
+    key: 'fast',
+    icon: 'mdi-flash-outline',
+    color: 'warning',
+    label: '极速扫描',
+    desc: '不测下载，延迟上限放宽，快速筛一轮',
+  },
+]
 
 // 可多选的 IP 来源；ip.txt 始终启用，由界面上固定勾选的只读项表示
 const sources = computed({
@@ -23,6 +48,32 @@ const customEnabled = computed(() => sources.value.includes('custom'))
 
 <template>
   <div class="settings">
+    <!-- 场景预设 -->
+    <v-card class="section" elevation="0">
+      <div class="section-head">
+        <v-icon size="18" color="primary">mdi-lightning-bolt-outline</v-icon>
+        <span class="section-title">场景预设</span>
+        <span class="section-desc">一键套用常用组合，之后仍可手动微调</span>
+      </div>
+
+      <div class="preset-row">
+        <button
+          v-for="p in presets"
+          :key="p.key"
+          type="button"
+          class="preset-item"
+          :disabled="disabled"
+          @click="emit('apply-preset', p.key)"
+        >
+          <v-icon :color="p.color" size="20" class="preset-icon">{{ p.icon }}</v-icon>
+          <div class="preset-body">
+            <div class="preset-title">{{ p.label }}</div>
+            <div class="preset-desc">{{ p.desc }}</div>
+          </div>
+        </button>
+      </div>
+    </v-card>
+
     <!-- 延迟测速 -->
     <v-card class="section" elevation="0">
       <div class="section-head">
@@ -529,6 +580,59 @@ const customEnabled = computed(() => sources.value.includes('custom'))
   color: #71717a;
   margin: 0 0 10px;
   min-height: 34px;
+}
+
+/* 场景预设 */
+.preset-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.preset-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid #26262e;
+  background: #17171c;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  font-family: inherit;
+}
+
+.preset-item:hover:not(:disabled) {
+  border-color: #4f6acd;
+  background: rgba(79, 106, 205, 0.08);
+}
+
+.preset-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.preset-icon {
+  margin-top: 1px;
+  flex: 0 0 auto;
+}
+
+.preset-body {
+  min-width: 0;
+}
+
+.preset-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #e4e4e7;
+  margin-bottom: 2px;
+}
+
+.preset-desc {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: #71717a;
 }
 
 .section :deep(.v-field) {
