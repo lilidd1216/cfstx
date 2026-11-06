@@ -39,12 +39,16 @@ CFSTX 是一个 **Cloudflare CDN 优选 IP 测速工具**。它会批量测试 C
 
 ## 下载
 
-前往 [**Gitee Releases**](https://gitee.com/liliaic/cfstx/releases) 下载最新的 Windows 压缩包，解压后双击 `cfstx.exe` 即可。
+前往 [**Gitee Releases**](https://gitee.com/liliaic/cfstx/releases) 选择适合你的版本：
 
-| 平台 | 文件名 |
-|---|---|
-| Windows 64 位 | `cfstx_windows_amd64.zip` |
-| Windows 32 位 | `cfstx_windows_386.zip` |
+| 版本 | 文件 | 说明 |
+|---|---|---|
+| **安装版（推荐）** | `CFSTX-Setup-x.x.x.exe` | 标准安装向导，可选安装路径，自动创建开始菜单和桌面快捷方式，支持卸载 |
+| 免安装版 | `CFSTX-x.x.x-portable.zip` | 解压即用，不写注册表，适合放到 U 盘或临时使用 |
+
+> [!NOTE]
+> 由于暂未购买代码签名证书，首次运行安装包时 Windows SmartScreen 可能提示「**无法验证发布者**」。
+> 这是未签名程序的正常提示，点击「**更多信息**」→「**仍要运行**」即可继续。
 
 > 如果平均延迟异常低（如 0.xx），说明测速时走了代理，请先关闭代理软件再测速。
 

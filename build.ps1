@@ -1,4 +1,4 @@
-# CFSTX 构建脚本
+﻿# CFSTX 构建脚本
 # 用法: .\build.ps1
 $ErrorActionPreference = "Stop"
 
