@@ -15,7 +15,9 @@ Pop-Location
 
 Write-Host "[2/3] 编译 Go 程序..." -ForegroundColor Cyan
 New-Item -ItemType Directory -Path "build\bin" -Force | Out-Null
-go build -o "build\bin\cfstx.exe" .
+# -H windowsgui：生成 GUI 子系统程序，双击时不会弹出黑色控制台窗口。
+# 命令行模式下由 console_windows.go 中的 AttachConsole 重新附加到父控制台。
+go build -ldflags "-H windowsgui" -o "build\bin\cfstx.exe" .
 
 # 如果项目位于低完整性沙箱目录（如 Codex Sandbox 的 Low Mandatory Level），
 # 构建出的 exe 会继承 Low IL，导致 WebView2 无法创建子进程（0x8000FFFF）。
