@@ -111,12 +111,11 @@ function delayColor(delay) {
   border: 1px solid #2a2a33;
   display: flex;
   flex-direction: column;
-  min-height: 0;
 }
 
 .result-table {
   background: transparent !important;
-  flex: 1;
+  max-height: 480px;
   overflow: auto;
 }
 

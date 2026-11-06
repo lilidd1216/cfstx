@@ -36,13 +36,28 @@ const historyOpen = ref(false)
 const snackbar = ref({ show: false, text: '', color: 'success' })
 const version = ref('v1.0.0')
 const elapsed = ref(0)
+const currentPage = ref('prefer-ip')
 
 let timer = null
 let startedAt = 0
 let es = null
 
+// 导航菜单：后续新增页面只需在此追加
+const navItems = [
+  { key: 'prefer-ip', title: '优选IP', icon: 'mdi-map-marker-radius-outline' },
+]
+
+const pageMeta = {
+  'prefer-ip': {
+    title: '优选IP',
+    desc: '测速 Cloudflare CDN 各 IP 的延迟与下载速度，筛出当前网络下最快的节点',
+  },
+}
+
+const currentMeta = computed(() => pageMeta[currentPage.value] || { title: '', desc: '' })
+
 // ---------------------------------------------------------------------------
-// HTTP 通信（替代 Wails 绑定）
+// HTTP 通信
 // ---------------------------------------------------------------------------
 
 async function httpGet(path) {
@@ -94,15 +109,6 @@ const phaseColor = computed(() => {
   }
 })
 
-const phaseIcon = computed(() => {
-  switch (phase.value) {
-    case 'ping': return 'mdi-progress-clock'
-    case 'download': return 'mdi-download'
-    case 'done': return 'mdi-check-circle'
-    default: return 'mdi-circle-outline'
-  }
-})
-
 // ---------------------------------------------------------------------------
 // 工具
 // ---------------------------------------------------------------------------
@@ -128,7 +134,7 @@ function stopTimer() {
 }
 
 // ---------------------------------------------------------------------------
-// 数据加载
+// 数据
 // ---------------------------------------------------------------------------
 
 async function loadConfig() {
@@ -229,7 +235,7 @@ function openRepo() {
 }
 
 // ---------------------------------------------------------------------------
-// 事件（SSE）
+// SSE 事件
 // ---------------------------------------------------------------------------
 
 function handleEvent(event, data) {
@@ -286,9 +292,6 @@ function bindEvents() {
     }
     handleEvent(msg.event, msg.data)
   }
-  es.onerror = () => {
-    // EventSource 会自动重连
-  }
 }
 
 onMounted(async () => {
@@ -312,139 +315,174 @@ onBeforeUnmount(() => {
 
 <template>
   <v-app>
-    <v-app-bar color="surface" elevation="0" height="64" class="app-bar">
-      <div class="d-flex align-center ml-4">
-        <v-icon color="primary" size="30" class="mr-3">mdi-speedometer</v-icon>
+    <!-- 左侧导航栏 -->
+    <v-navigation-drawer permanent width="220" color="surface" class="nav-drawer">
+      <div class="brand">
+        <v-icon color="primary" size="30">mdi-speedometer</v-icon>
         <div>
-          <div class="text-h6 font-weight-bold glow" style="line-height: 1.1">CFSTX</div>
-          <div class="text-caption text-medium-emphasis">Cloudflare CDN 优选测速</div>
+          <div class="brand-name">CFSTX</div>
+          <div class="brand-sub">Cloudflare 优选测速</div>
         </div>
-        <v-chip size="x-small" variant="tonal" color="primary" class="ml-4">{{ version }}</v-chip>
       </div>
 
-      <v-spacer />
+      <v-divider />
 
-      <v-btn icon variant="text" title="历史记录" @click="historyOpen = true">
-        <v-icon>mdi-history</v-icon>
-      </v-btn>
-      <v-btn icon variant="text" title="项目主页" @click="openRepo">
-        <v-icon>mdi-open-in-new</v-icon>
-      </v-btn>
-    </v-app-bar>
+      <v-list nav density="comfortable" class="nav-list">
+        <v-list-item
+          v-for="item in navItems"
+          :key="item.key"
+          :prepend-icon="item.icon"
+          :title="item.title"
+          :active="currentPage === item.key"
+          color="primary"
+          rounded="lg"
+          @click="currentPage = item.key"
+        />
+      </v-list>
 
+      <template #append>
+        <v-divider />
+        <div class="nav-footer">
+          <div class="d-flex align-center justify-space-between mb-2">
+            <span class="text-caption text-medium-emphasis">{{ version }}</span>
+            <v-btn icon size="x-small" variant="text" title="历史记录" @click="historyOpen = true">
+              <v-icon size="16">mdi-history</v-icon>
+            </v-btn>
+          </div>
+          <v-btn
+            variant="text"
+            size="small"
+            block
+            prepend-icon="mdi-open-in-new"
+            class="justify-start"
+            @click="openRepo"
+          >
+            项目主页
+          </v-btn>
+        </div>
+      </template>
+    </v-navigation-drawer>
+
+    <!-- 主内容区 -->
     <v-main class="main-bg">
-      <div class="layout">
-        <!-- 左侧参数面板 -->
-        <aside class="left-col">
-          <v-card class="panel-card" elevation="0">
-            <v-card-title class="d-flex align-center py-3">
-              <v-icon class="mr-2" size="20">mdi-tune-variant</v-icon>
-              <span class="text-subtitle-1 font-weight-medium">测速参数</span>
-              <v-spacer />
-              <v-btn size="small" variant="text" :disabled="running" @click="resetConfig">重置</v-btn>
-            </v-card-title>
-            <v-divider />
-            <div class="panel-body">
-              <ConfigPanel
-                v-model:config="config"
-                :running="running"
-                @pick-ip-file="pickIpFile"
-              />
-            </div>
-          </v-card>
-        </aside>
+      <div class="page">
+        <!-- 页头 -->
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">{{ currentMeta.title }}</h1>
+            <p class="page-desc">{{ currentMeta.desc }}</p>
+          </div>
+          <v-btn
+            variant="text"
+            size="small"
+            prepend-icon="mdi-restore"
+            :disabled="running"
+            @click="resetConfig"
+          >
+            恢复默认
+          </v-btn>
+        </div>
 
-        <!-- 右侧主区域 -->
-        <section class="right-col">
-          <v-card class="panel-card control-card" elevation="0">
-            <div class="d-flex align-center pa-4 ga-5">
-              <v-btn
-                v-if="!running"
-                color="primary"
-                size="large"
-                prepend-icon="mdi-play"
-                class="px-8"
-                @click="start"
-              >
-                开始测速
-              </v-btn>
-              <v-btn
-                v-else
-                color="error"
-                size="large"
-                prepend-icon="mdi-stop"
-                class="px-8"
-                @click="stop"
-              >
-                停止
-              </v-btn>
+        <!-- 测速操作栏（吸顶） -->
+        <v-card class="action-bar" elevation="0">
+          <div class="action-inner">
+            <v-btn
+              v-if="!running"
+              color="primary"
+              size="large"
+              prepend-icon="mdi-play"
+              class="px-8"
+              @click="start"
+            >
+              开始测速
+            </v-btn>
+            <v-btn
+              v-else
+              color="error"
+              size="large"
+              prepend-icon="mdi-stop"
+              class="px-8"
+              @click="stop"
+            >
+              停止
+            </v-btn>
 
-              <v-divider vertical class="mx-1" style="height: 42px" />
+            <v-divider vertical class="mx-2" style="height: 40px" />
 
-              <div class="status-block">
-                <div class="text-caption text-medium-emphasis">状态</div>
-                <div class="d-flex align-center ga-2">
-                  <v-icon size="16" :color="phaseColor">{{ phaseIcon }}</v-icon>
-                  <span class="text-body-2 font-weight-medium">{{ phaseLabel }}</span>
-                </div>
-              </div>
-
-              <div class="status-block">
-                <div class="text-caption text-medium-emphasis">用时</div>
-                <div class="metric-value text-body-1">{{ elapsed }} s</div>
-              </div>
-
-              <v-spacer />
-
-              <div v-if="phase === 'ping'" class="status-block">
-                <div class="text-caption text-medium-emphasis">可用 IP</div>
-                <div class="metric-value text-body-1 text-success">{{ progress.available }}</div>
-              </div>
-
-              <div v-if="phase === 'download'" class="status-block">
-                <div class="text-caption text-medium-emphasis">当前 IP</div>
-                <div class="mono text-body-2">{{ progress.ip || '—' }}</div>
-              </div>
-
-              <div v-if="phase === 'download'" class="status-block">
-                <div class="text-caption text-medium-emphasis">当前速度</div>
-                <div class="metric-value text-body-1 text-primary">
-                  {{ (progress.speed || 0).toFixed(2) }} MB/s
-                </div>
+            <div class="status-block">
+              <div class="status-label">状态</div>
+              <div class="d-flex align-center ga-2">
+                <span class="status-dot" :class="`bg-${phaseColor}`" />
+                <span class="status-value">{{ phaseLabel }}</span>
               </div>
             </div>
 
-            <v-progress-linear
-              v-if="running"
-              :model-value="progressPercent"
-              :color="phase === 'download' ? 'secondary' : 'primary'"
-              height="4"
-              striped
-            />
-          </v-card>
-
-          <!-- 进度详情 -->
-          <v-card v-if="running" class="panel-card progress-card" elevation="0">
-            <div class="d-flex align-center justify-space-between mb-2">
-              <span class="text-body-2 text-medium-emphasis">
-                {{ phase === 'ping' ? '延迟测速进度' : '下载测速进度' }}
-              </span>
-              <span class="metric-value text-body-2">
-                {{ progress.current }} / {{ progress.total }}
-                <span class="text-medium-emphasis ml-2">{{ progressPercent.toFixed(1) }}%</span>
-              </span>
+            <div class="status-block">
+              <div class="status-label">用时</div>
+              <div class="status-value mono">{{ elapsed }} s</div>
             </div>
-            <v-progress-linear
-              :model-value="progressPercent"
-              :color="phase === 'download' ? 'secondary' : 'primary'"
-              height="10"
-              rounded
-              striped
-            />
-          </v-card>
 
-          <ResultTable :results="results" :loading="running" @export="exportCsv" />
-        </section>
+            <div v-if="phase === 'ping'" class="status-block">
+              <div class="status-label">可用 IP</div>
+              <div class="status-value mono text-success">{{ progress.available }}</div>
+            </div>
+
+            <div v-if="phase === 'download'" class="status-block wide">
+              <div class="status-label">当前 IP</div>
+              <div class="status-value mono">{{ progress.ip || '—' }}</div>
+            </div>
+
+            <div v-if="phase === 'download'" class="status-block">
+              <div class="status-label">当前速度</div>
+              <div class="status-value mono text-primary">{{ (progress.speed || 0).toFixed(2) }} MB/s</div>
+            </div>
+
+            <v-spacer />
+
+            <div class="status-block">
+              <div class="status-label">结果</div>
+              <div class="status-value mono">{{ results.length }} 个</div>
+            </div>
+          </div>
+
+          <v-progress-linear
+            v-if="running"
+            :model-value="progressPercent"
+            :color="phase === 'download' ? 'secondary' : 'primary'"
+            height="3"
+            striped
+          />
+        </v-card>
+
+        <!-- 进度条 -->
+        <v-card v-if="running" class="progress-card" elevation="0">
+          <div class="d-flex align-center justify-space-between mb-2">
+            <span class="text-body-2 text-medium-emphasis">
+              {{ phase === 'ping' ? '延迟测速进度' : '下载测速进度' }}
+            </span>
+            <span class="mono text-body-2">
+              {{ progress.current }} / {{ progress.total }}
+              <span class="text-medium-emphasis ml-2">{{ progressPercent.toFixed(1) }}%</span>
+            </span>
+          </div>
+          <v-progress-linear
+            :model-value="progressPercent"
+            :color="phase === 'download' ? 'secondary' : 'primary'"
+            height="8"
+            rounded
+            striped
+          />
+        </v-card>
+
+        <!-- 设置 -->
+        <ConfigPanel
+          v-model:config="config"
+          :running="running"
+          @pick-ip-file="pickIpFile"
+        />
+
+        <!-- 结果 -->
+        <ResultTable :results="results" :loading="running" @export="exportCsv" />
       </div>
     </v-main>
 
@@ -468,65 +506,122 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.nav-drawer {
+  border-right: 1px solid #23232b !important;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 20px 18px;
+}
+
+.brand-name {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: #f4f4f5;
+  line-height: 1.2;
+}
+
+.brand-sub {
+  font-size: 11px;
+  color: #71717a;
+  margin-top: 2px;
+}
+
+.nav-list {
+  padding: 8px 10px;
+}
+
+.nav-footer {
+  padding: 12px 16px 16px;
+}
+
 .main-bg {
   background: #121216;
-  padding: 16px;
 }
 
-.layout {
-  display: flex;
-  gap: 16px;
-  height: calc(100vh - 64px - 32px);
-  min-height: 0;
-}
-
-.left-col {
-  width: 380px;
-  flex-shrink: 0;
-  min-height: 0;
-}
-
-.right-col {
-  flex: 1;
+.page {
+  height: 100%;
+  overflow-y: auto;
+  padding: 24px 28px 32px;
   display: flex;
   flex-direction: column;
   gap: 16px;
-  min-width: 0;
-  min-height: 0;
 }
 
-.panel-card {
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.page-title {
+  font-size: 24px;
+  font-weight: 600;
+  color: #f4f4f5;
+  margin: 0 0 6px;
+}
+
+.page-desc {
+  font-size: 13px;
+  color: #71717a;
+  margin: 0;
+}
+
+.action-bar {
   background: #1b1b21 !important;
   border: 1px solid #2a2a33;
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
 
-.panel-body {
-  flex: 1;
-  overflow: hidden;
-  padding: 12px;
-  min-height: 0;
-}
-
-.left-col :deep(.v-card) {
-  height: 100%;
+.action-inner {
   display: flex;
-  flex-direction: column;
-}
-
-.control-card {
-  flex-shrink: 0;
-}
-
-.progress-card {
-  flex-shrink: 0;
-  padding: 16px;
+  align-items: center;
+  gap: 20px;
+  padding: 14px 20px;
 }
 
 .status-block {
-  min-width: 90px;
+  min-width: 84px;
 }
 
-.app-bar {
-  border-bottom: 1px solid #23232b;
+.status-block.wide {
+  min-width: 150px;
+}
+
+.status-label {
+  font-size: 11px;
+  color: #71717a;
+  margin-bottom: 3px;
+}
+
+.status-value {
+  font-size: 14px;
+  color: #e4e4e7;
+  font-weight: 500;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.progress-card {
+  background: #1b1b21 !important;
+  border: 1px solid #2a2a33;
+  padding: 16px 20px;
+}
+
+.mono {
+  font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+  font-variant-numeric: tabular-nums;
 }
 </style>
