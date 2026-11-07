@@ -120,7 +120,7 @@ edgetunnel 这类 Workers 脚本需要 `PROXYIP`：一个能代为转发到 Clou
 **测速结果很好，但客户端里大量 timeout**
 
 测的是「IP 能否连上 Cloudflare」，客户端访问的是你的域名，两者路由不重合。打开「自定义测速域名」，填你的 Worker 域名再测一遍。
-→ [详细说明](https://gitee.com/liliaic/cfstx/wiki/FAQ#测速结果很好但客户端里大量-timeout)
+→ [详细说明](https://gitee.com/liliaic/cfstx/wiki/Speed-Test)
 
 **可用 IP 很多，但下载速度全是 0.00**
 
