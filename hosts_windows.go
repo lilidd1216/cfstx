@@ -89,9 +89,20 @@ func validateHostsInput(domain, ip string) (string, string, error) {
 	domain = task.NormalizeProbeDomain(domain)
 	ip = strings.TrimSpace(ip)
 
-	// hosts 只认 IP，不认端口。用户可能直接粘了 "1.2.3.4:443" 或
-	// "[2606:4700::1]:8443"，这里自动把端口和方括号去掉。
-	if h, _, err := net.SplitHostPort(ip); err == nil {
+	// 用户可能直接粘了 TXT 导出里的格式：1.2.3.4:10001#HKG 39.84MB/s。
+	// 先把 #备注 去掉，否则端口会解析成 "10001#HKG"。
+	if i := strings.IndexAny(ip, "# "); i >= 0 {
+		ip = strings.TrimSpace(ip[:i])
+	}
+
+	// hosts 只做域名解析，不能指定端口：浏览器访问 https 固定走 443。
+	// 粘了 443 的地址可以照用，其它端口必须明确拒绝 ——
+	// 静默去掉端口会写出一条「看起来成功、实际连不上」的记录。
+	if h, port, err := net.SplitHostPort(ip); err == nil {
+		if port != "443" {
+			return "", "", fmt.Errorf(
+				"%s 端口不能用：hosts 只做域名解析，浏览器访问 https 固定走 443，写进去会连不上", port)
+		}
 		ip = h
 	}
 	ip = strings.Trim(ip, "[]")

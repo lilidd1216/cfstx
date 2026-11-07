@@ -13,7 +13,7 @@ import (
 
 // Current 是程序版本号，构建时可通过
 // -ldflags "-X gitee.com/liliaic/cfstx/version.Current=v1.0.0" 覆盖。
-var Current = "v1.2.3"
+var Current = "v1.2.4"
 
 const (
 	// RepoURL 是项目主页。

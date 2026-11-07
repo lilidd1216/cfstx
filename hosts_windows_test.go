@@ -171,10 +171,17 @@ func TestValidateHostsInput(t *testing.T) {
 		{"非法 IP", "fast3.example.com", "999.1.1.1", "", "", "IP 格式不正确"},
 		{"双点域名", "a..b", "1.2.3.4", "", "", "域名格式不正确"},
 		{"IPv6 地址", "fast3.example.com", "2606:4700::1", "fast3.example.com", "2606:4700::1", ""},
-		// hosts 只认 IP，用户粘带端口的地址时要自动去掉端口
-		{"IPv4 带端口", "fast3.example.com", "1.2.3.4:443", "fast3.example.com", "1.2.3.4", ""},
-		{"IPv6 带端口", "fast3.example.com", "[2606:4700::1]:8443", "fast3.example.com", "2606:4700::1", ""},
+		// 443 端口可以照用，端口会被去掉
+		{"IPv4 带 443 端口", "fast3.example.com", "1.2.3.4:443", "fast3.example.com", "1.2.3.4", ""},
+		{"IPv6 带 443 端口", "fast3.example.com", "[2606:4700::1]:443", "fast3.example.com", "2606:4700::1", ""},
 		{"IPv6 带方括号", "fast3.example.com", "[2606:4700::1]", "fast3.example.com", "2606:4700::1", ""},
+		// 非 443 端口必须拒绝：hosts 不能指定端口，写进去连不上
+		{"IPv4 非 443 端口", "fast3.example.com", "1.2.3.4:10001", "", "", "端口不能用"},
+		{"IPv6 非 443 端口", "fast3.example.com", "[2606:4700::1]:8443", "", "", "端口不能用"},
+		// TXT 导出格式：IP:端口#备注 速度
+		{"TXT 格式 443", "fast3.example.com", "52.74.51.158:443#SIN 34.58MB/s", "fast3.example.com", "52.74.51.158", ""},
+		{"TXT 格式 非443", "fast3.example.com", "27.44.142.135:10001#HKG 39.84MB/s", "", "", "端口不能用"},
+		{"带备注无端口", "fast3.example.com", "104.16.0.1#HKG", "fast3.example.com", "104.16.0.1", ""},
 	}
 
 	for _, c := range cases {

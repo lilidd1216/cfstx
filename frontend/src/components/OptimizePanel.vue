@@ -36,41 +36,83 @@ function normalizeDomain() {
   domain.value = v.toLowerCase()
 }
 
-// hosts 只认 IP，不认端口：用户粘 1.2.3.4:443 或 [::1]:8443 时自动去掉端口
-function normalizeIPInput() {
-  let v = String(targetIP.value || '').trim()
-  if (!v) return
+// hosts 只做域名解析，不涉及端口：浏览器访问 https 固定走 443。
+// 所以粘贴 1.2.3.4:10001 时不能静默去掉端口 —— 那样会写出一条
+// 「看起来成功、实际连 443 连不上」的记录。
+//
+// 这里把用户可能粘的东西拆开：
+//   27.44.142.135:10001#HKG 39.84MB/s  →  ip=27.44.142.135 port=10001
+//   52.74.51.158:443#SIN 34.58MB/s     →  ip=52.74.51.158  port=443
+//   [2606:4700::1]:8443                →  ip=2606:4700::1   port=8443
+//   104.16.0.1                         →  ip=104.16.0.1     port=0
+function parseIPInput(raw) {
+  let v = String(raw || '').trim()
+  if (!v) return { ip: '', port: 0 }
+
+  // 去掉导出的 TXT 格式里的 #备注
+  const hash = v.indexOf('#')
+  if (hash >= 0) v = v.slice(0, hash).trim()
 
   // 去掉可能粘进来的协议和路径
   const scheme = v.indexOf('://')
   if (scheme >= 0) v = v.slice(scheme + 3)
-  const cut = v.search(/[/?#]/)
+  const cut = v.search(/[/?]/)
   if (cut >= 0) v = v.slice(0, cut)
 
-  // [IPv6]:port
+  let ip = v
+  let port = 0
   if (v.startsWith('[')) {
+    // [IPv6]:port 或 [IPv6]
     const end = v.indexOf(']')
     if (end > 0) {
-      v = v.slice(1, end)
+      ip = v.slice(1, end)
+      const rest = v.slice(end + 1)
+      if (rest.startsWith(':')) port = Number(rest.slice(1)) || 0
     }
   } else if (/^(\d{1,3}\.){3}\d{1,3}:\d+$/.test(v)) {
     // IPv4:port
-    v = v.slice(0, v.indexOf(':'))
+    const idx = v.indexOf(':')
+    ip = v.slice(0, idx)
+    port = Number(v.slice(idx + 1)) || 0
   }
-  targetIP.value = v.trim()
+  return { ip: ip.trim(), port }
+}
+
+function normalizeIPInput() {
+  const raw = String(targetIP.value || '').trim()
+  if (!raw) return
+  const { ip, port } = parseIPInput(raw)
+
+  // 非 443 端口保留原样，让下面的错误提示留在界面上，
+  // 用户才能看到自己粘的是哪个端口、为什么不能用
+  if (port && port !== 443) {
+    targetIP.value = raw
+    return
+  }
+  targetIP.value = ip
 }
 
 // 即时校验，让用户在点按钮之前就知道格式对不对
 const ipState = computed(() => {
-  const v = String(targetIP.value || '').trim()
-  if (!v) return { ok: false, msg: '' }
+  const raw = String(targetIP.value || '').trim()
+  if (!raw) return { ok: false, msg: '' }
 
-  const isV4 = /^(\d{1,3}\.){3}\d{1,3}$/.test(v) &&
-    v.split('.').every((o) => Number(o) >= 0 && Number(o) <= 255)
+  const { ip, port } = parseIPInput(raw)
+
+  // 端口不是 443 时直接判负 —— 写进 hosts 也不会生效
+  if (port && port !== 443) {
+    return {
+      ok: false,
+      msg: `${port} 端口不能用：hosts 只做域名解析，浏览器访问 https 固定走 443，写进去会连 ${ip}:443 而失败`,
+    }
+  }
+
+  const isV4 = /^(\d{1,3}\.){3}\d{1,3}$/.test(ip) &&
+    ip.split('.').every((o) => Number(o) >= 0 && Number(o) <= 255)
   if (isV4) return { ok: true, msg: '' }
 
   // IPv6：只要包含冒号且字符合法就放行，精确校验交给后端
-  if (v.includes(':') && /^[0-9a-fA-F:.]+$/.test(v)) {
+  if (ip.includes(':') && /^[0-9a-fA-F:.]+$/.test(ip)) {
     return { ok: true, msg: '' }
   }
   return { ok: false, msg: 'IP 格式不正确' }
@@ -133,7 +175,8 @@ async function loadHosts() {
 
 async function apply() {
   busy.value = true
-  const ip = targetIP.value.trim()
+  // 用解析出的纯 IP，避免把 #备注 之类的东西带进 hosts
+  const { ip } = parseIPInput(targetIP.value)
   const d = domain.value.trim()
   try {
     await httpPost('/api/hosts/apply', { domain: d, ip })
@@ -237,7 +280,7 @@ onMounted(loadHosts)
         prepend-inner-icon="mdi-ip-network-outline"
         :error="!!ipState.msg"
         :error-messages="ipState.msg"
-        hint="可以直接手填，也可以从下面点选测速结果；带端口会自动去掉"
+        hint="可以直接粘贴 IP:端口#备注；hosts 只对 443 端口有效，其它端口会提示原因"
         persistent-hint
         class="ip-input"
         autocomplete="off"
