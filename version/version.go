@@ -24,7 +24,7 @@ const repoURL = "https://gitee.com/liliaic/cfstx"
 const RepoURL = repoURL
 
 // RepoURLGitHub 是 GitHub 镜像仓库。
-const RepoURLGitHub = "https://github.com/a981439285/cfstx"
+const RepoURLGitHub = "https://github.com/lilidd1216/cfstx"
 
 // ReleasesURL 是 Release 列表页面。
 const ReleasesURL = repoURL + "/releases"
@@ -54,9 +54,9 @@ var sources = []source{
 	},
 	{
 		Name:       "GitHub",
-		VersionURL: "https://raw.githubusercontent.com/a981439285/cfstx/master/version.txt",
-		ReleaseAPI: "https://api.github.com/repos/a981439285/cfstx/releases/latest",
-		WebURL:     "https://github.com/a981439285/cfstx",
+		VersionURL: "https://raw.githubusercontent.com/lilidd1216/cfstx/master/version.txt",
+		ReleaseAPI: "https://api.github.com/repos/lilidd1216/cfstx/releases/latest",
+		WebURL:     "https://github.com/lilidd1216/cfstx",
 		NeedsUA:    true,
 	},
 }

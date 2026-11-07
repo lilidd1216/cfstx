@@ -30,7 +30,7 @@ Set-Location $root
 
 $GITEE_OWNER = "liliaic"
 $GITEE_REPO  = "cfstx"
-$GH_OWNER    = "a981439285"
+$GH_OWNER    = "lilidd1216"
 $GH_REPO     = "cfstx"
 
 # ---------------------------------------------------------------- 版本号

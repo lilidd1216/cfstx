@@ -4,7 +4,7 @@
 >
 > 基于 [XIU2/CloudflareSpeedTest](https://github.com/XIU2/CloudflareSpeedTest) 二次开发　·　许可证 [GPL-3.0](LICENSE)
 >
-> **Gitee**（国内主站）：[gitee.com/liliaic/cfstx](https://gitee.com/liliaic/cfstx)　·　**GitHub**（镜像）：[github.com/a981439285/cfstx](https://github.com/a981439285/cfstx)
+> **Gitee**（国内主站）：[gitee.com/liliaic/cfstx](https://gitee.com/liliaic/cfstx)　·　**GitHub**（镜像）：[github.com/lilidd1216/cfstx](https://github.com/lilidd1216/cfstx)
 
 ![主界面](docs/images/main.png)
 
@@ -51,7 +51,7 @@ CFSTX 把这件事自动化：**批量测速 → 按你的条件过滤 → 给�
 | 平台 | 地址 | 适合 |
 |---|---|---|
 | **Gitee**（国内推荐） | [gitee.com/liliaic/cfstx/releases](https://gitee.com/liliaic/cfstx/releases) | 国内直连，下载快 |
-| GitHub（镜像） | [github.com/a981439285/cfstx/releases](https://github.com/a981439285/cfstx/releases) | 国际访问 |
+| GitHub（镜像） | [github.com/lilidd1216/cfstx/releases](https://github.com/lilidd1216/cfstx/releases) | 国际访问 |
 
 每个 Release 提供两个文件：
 
@@ -207,9 +207,9 @@ release.ps1    REM 完整发布产物（安装包 + 免安装 zip）
 | | 地址 |
 |---|---|
 | **Gitee 仓库**（国内主站） | [gitee.com/liliaic/cfstx](https://gitee.com/liliaic/cfstx) |
-| **GitHub 仓库**（镜像） | [github.com/a981439285/cfstx](https://github.com/a981439285/cfstx) |
+| **GitHub 仓库**（镜像） | [github.com/lilidd1216/cfstx](https://github.com/lilidd1216/cfstx) |
 | **Gitee Releases** | [gitee.com/liliaic/cfstx/releases](https://gitee.com/liliaic/cfstx/releases) |
-| **GitHub Releases** | [github.com/a981439285/cfstx/releases](https://github.com/a981439285/cfstx/releases) |
+| **GitHub Releases** | [github.com/lilidd1216/cfstx/releases](https://github.com/lilidd1216/cfstx/releases) |
 | **Wiki** | [gitee.com/liliaic/cfstx/wiki](https://gitee.com/liliaic/cfstx/wiki) |
 | **更新日志** | [CHANGELOG.md](CHANGELOG.md) |
 | **上游项目** | [XIU2/CloudflareSpeedTest](https://github.com/XIU2/CloudflareSpeedTest) |
