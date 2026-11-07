@@ -39,4 +39,13 @@ const vuetify = createVuetify({
   },
 })
 
-createApp(App).use(vuetify).mount('#app')
+const app = createApp(App)
+
+// 组件渲染抛错时 Vue 会卸载整个组件，界面上表现为「某块功能凭空消失」，
+// 不报任何东西，排查起来非常困难（v1.1.4 的 Hosts 卡片就这样丢了两个版本）。
+// 这里至少把错误打到控制台，并且不静默吞掉。
+app.config.errorHandler = (err, _instance, info) => {
+  console.error('[CFSTX] 渲染出错：', err, '\n组件位置：', info)
+}
+
+app.use(vuetify).mount('#app')

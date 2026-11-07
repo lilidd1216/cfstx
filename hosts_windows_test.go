@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -100,5 +101,50 @@ func TestHostsBlockRoundTrip(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].IP != "104.17.0.1" {
 		t.Fatalf("覆盖写入后应只剩新条目，实际：%+v", entries)
+	}
+}
+
+// hosts 里没有 CFSTX 区块时必须返回空切片而不是 nil。
+// nil 会被 encoding/json 序列化成 null，前端读 entries.length 直接抛
+// TypeError，整个 Hosts 卡片会被 Vue 卸载 —— v1.1.4 ~ v1.2.0 的
+// 「优化工具里看不到 Hosts 功能」就是这个问题。
+func TestReadHostsEntriesReturnsEmptySlice(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "hosts")
+	if err := os.WriteFile(f, []byte("127.0.0.1 localhost\n::1 localhost\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := readHostsEntries(f)
+	if err != nil {
+		t.Fatalf("读取失败: %v", err)
+	}
+	if entries == nil {
+		t.Fatal("应返回空切片而不是 nil")
+	}
+	if len(entries) != 0 {
+		t.Errorf("期望 0 条，实际 %d 条", len(entries))
+	}
+}
+
+// 读不到 hosts 文件时同样不能返回 nil。
+func TestReadHostsEntriesMissingFile(t *testing.T) {
+	entries, err := readHostsEntries(filepath.Join(t.TempDir(), "not-exist"))
+	if err == nil {
+		t.Error("文件不存在时应返回错误")
+	}
+	_ = entries
+}
+
+// 直接验证 GET /api/hosts 的 JSON 里 entries 是 [] 而不是 null。
+func TestHostsStatusJSONHasNoNull(t *testing.T) {
+	raw, err := json.Marshal(NewApp().GetHostsStatus())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"entries":null`) {
+		t.Fatalf(`JSON 里出现了 "entries":null，前端会崩：%s`, raw)
+	}
+	if !strings.Contains(string(raw), `"entries":[`) {
+		t.Fatalf(`JSON 里 entries 应为数组：%s`, raw)
 	}
 }

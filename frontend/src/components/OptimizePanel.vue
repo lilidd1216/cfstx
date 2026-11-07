@@ -9,6 +9,8 @@ const emit = defineEmits(['toast'])
 const STORAGE_DOMAIN = 'cfstx.hosts.domain'
 const STORAGE_IP = 'cfstx.hosts.ip'
 
+// entries 一定要给数组：后端若返回 null，模板里的 entries.length 会抛
+// TypeError，整个 Hosts 卡片会被 Vue 卸载，表现为「看不到这个功能」。
 const hosts = ref({ isAdmin: false, hostsPath: '', entries: [], backupDir: '' })
 // 记住上次填写的域名与 IP，切换页面或重启后不用重填
 const domain = ref(localStorage.getItem(STORAGE_DOMAIN) || '')
@@ -21,13 +23,13 @@ watch(selectedIP, (v) => localStorage.setItem(STORAGE_IP, v || ''))
 // hosts 只能映射 IP、不能指定端口，所以只列 443 端口的结果。
 // 用点击列表而不是下拉框：避免浮层组件在 WebView2 中的兼容问题。
 const candidates = computed(() =>
-  props.results
+  (props.results || [])
     .filter((r) => (r.port || 443) === 443)
     .map((r) => ({
       value: r.ip,
-      delay: r.delay.toFixed(0),
-      speed: r.speed.toFixed(1),
-      colo: r.colo,
+      delay: Number(r.delay || 0).toFixed(0),
+      speed: Number(r.speed || 0).toFixed(1),
+      colo: r.colo || '',
     }))
 )
 
@@ -61,7 +63,15 @@ async function httpPost(path, body) {
 
 async function loadHosts() {
   try {
-    hosts.value = await httpGet('/api/hosts')
+    const r = await httpGet('/api/hosts')
+    // 后端字段缺失或为 null 时补默认值，避免整个卡片渲染失败
+    hosts.value = {
+      isAdmin: !!r?.isAdmin,
+      hostsPath: r?.hostsPath || '',
+      entries: Array.isArray(r?.entries) ? r.entries : [],
+      backupDir: r?.backupDir || '',
+      exePath: r?.exePath || '',
+    }
   } catch (e) {
     emit('toast', '读取 hosts 状态失败：' + e.message, 'error')
   }
@@ -133,10 +143,21 @@ onMounted(loadHosts)
         type="warning"
         variant="tonal"
         density="compact"
-        class="mb-4"
+        class="mb-4 admin-alert"
         icon="mdi-shield-key-outline"
       >
-        当前不是管理员权限，无法修改 hosts。请关闭 CFSTX，右键选择「以管理员身份运行」后再试。
+        <div>当前不是管理员权限，无法修改 hosts。</div>
+        <ol class="admin-steps">
+          <li>关闭 CFSTX</li>
+          <li>找到下面的程序文件，右键 →「<strong>以管理员身份运行</strong>」</li>
+          <li>重新打开本页面即可</li>
+        </ol>
+        <div v-if="hosts.exePath" class="exe-line">
+          <span class="mono exe-path">{{ hosts.exePath }}</span>
+          <v-btn size="x-small" variant="text" @click="copy(hosts.exePath, '程序路径')">
+            复制路径
+          </v-btn>
+        </div>
       </v-alert>
 
       <v-text-field
@@ -312,6 +333,30 @@ onMounted(loadHosts)
   border-radius: 6px;
   background: #17171c;
   border-left: 3px solid #4f6acd;
+}
+
+/* 非管理员提示：给出可照做的步骤和程序路径 */
+.admin-steps {
+  margin: 6px 0 8px;
+  padding-left: 20px;
+  font-size: 12.5px;
+  line-height: 1.9;
+}
+
+.exe-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.exe-path {
+  font-size: 11.5px;
+  color: #d4b26a;
+  background: rgba(0, 0, 0, 0.28);
+  padding: 3px 8px;
+  border-radius: 4px;
+  word-break: break-all;
 }
 
 .empty {

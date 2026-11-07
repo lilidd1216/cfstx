@@ -29,6 +29,9 @@ type HostsStatus struct {
 	HostsPath string       `json:"hostsPath"` // hosts 文件路径
 	Entries   []HostsEntry `json:"entries"`   // CFSTX 区块内现有条目
 	BackupDir string       `json:"backupDir"` // 备份目录
+	// ExePath 是当前程序路径。非管理员时界面会显示它，
+	// 方便用户关掉后去这个位置右键「以管理员身份运行」。
+	ExePath string `json:"exePath"`
 }
 
 // hostsPath 返回系统 hosts 文件路径。
@@ -61,12 +64,18 @@ func isElevated() bool {
 // GetHostsStatus 返回 hosts 当前状态，供界面展示。
 func (a *App) GetHostsStatus() HostsStatus {
 	p := hostsPath()
-	entries, _ := readHostsEntries(p)
+	entries, err := readHostsEntries(p)
+	if err != nil || entries == nil {
+		// 读不到 hosts 时也要给出空数组，不能让前端拿到 null
+		entries = make([]HostsEntry, 0)
+	}
+	exe, _ := os.Executable()
 	return HostsStatus{
 		IsAdmin:   isElevated(),
 		HostsPath: p,
 		Entries:   entries,
 		BackupDir: filepath.Join(configDir(), "hosts-backup"),
+		ExePath:   exe,
 	}
 }
 
@@ -150,7 +159,9 @@ func readHostsEntries(path string) ([]HostsEntry, error) {
 		return nil, err
 	}
 
-	var out []HostsEntry
+	// 必须初始化成空切片：nil 切片会被 encoding/json 序列化成 null，
+	// 前端读 entries.length 会直接抛 TypeError，把整个 Hosts 卡片渲染挂掉。
+	out := make([]HostsEntry, 0)
 	inside := false
 	for _, line := range strings.Split(string(data), "\n") {
 		t := strings.TrimSpace(line)

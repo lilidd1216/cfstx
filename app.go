@@ -875,7 +875,8 @@ func (a *App) ExportLog(path string) (string, error) {
 // GetHistory 返回历史记录（最新在前）。
 func (a *App) GetHistory() []HistoryRecord {
 	var list []HistoryRecord
-	if err := readJSONFile(a.historyPath(), &list); err != nil {
+	if err := readJSONFile(a.historyPath(), &list); err != nil || list == nil {
+		// 返回空切片而不是 nil：nil 会被序列化成 null，前端读 .length 会崩
 		return []HistoryRecord{}
 	}
 	return list
