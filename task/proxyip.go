@@ -102,6 +102,14 @@ type ProxyIPResult struct {
 	ExitLoc   string `json:"exitLoc"`
 	ExitIPv6  bool   `json:"exitIpv6"`
 	Error     string `json:"error"`
+
+	// Uncertain 表示「本机无法验证」，既不能判可用也不能判不可用。
+	//
+	// 典型场景：ProxyIP 域名 CNAME 到了 Cloudflare 自己的 CDN 域名，
+	// 本机 DNS 解析出来全是 Cloudflare 网段，从本机无法直连验证。
+	// 但 Cloudflare 内部的 DNS 结果可能不同（实测 proxyip.cmliussss.net
+	// 在 Worker 里能正常使用，出口还在变），所以不能直接判死。
+	Uncertain bool `json:"uncertain"`
 }
 
 // TotalDelay 是判定优劣用的总耗时（越小越好）。
@@ -356,11 +364,23 @@ func ProbeProxyIPs(
 	return results
 }
 
-// sortProxyIPResults 把可用的排在前面，同组内按总耗时升序。
+// sortProxyIPResults 排序：可用 → 本机无法验证 → 不可用，
+// 同组内可用的按总耗时升序。
 func sortProxyIPResults(rs []ProxyIPResult) {
+	rank := func(r ProxyIPResult) int {
+		switch {
+		case r.OK:
+			return 0
+		case r.Uncertain:
+			return 1
+		default:
+			return 2
+		}
+	}
 	sort.SliceStable(rs, func(i, j int) bool {
-		if rs[i].OK != rs[j].OK {
-			return rs[i].OK
+		ri, rj := rank(rs[i]), rank(rs[j])
+		if ri != rj {
+			return ri < rj
 		}
 		if rs[i].OK {
 			if a, b := rs[i].TotalDelay(), rs[j].TotalDelay(); a != b {
@@ -388,9 +408,10 @@ func probeOneProxyIP(c ProxyIPCandidate, probeDomain string) ProxyIPResult {
 	// 域名形式的 ProxyIP 有一部分直接 CNAME 到了 Cloudflare，
 	// 这些地址证书和 trace 都会「通过」，但配进节点完全不工作，
 	// 必须先剔除 —— 否则用户会以为自己挑到了好节点。
-	targets, errMsg := resolveProxyIPTargets(c.Host)
+	targets, errMsg, uncertain := resolveProxyIPTargets(c.Host)
 	if errMsg != "" {
 		res.Error = errMsg
+		res.Uncertain = uncertain
 		return res
 	}
 
@@ -458,21 +479,26 @@ func probeOneProxyIP(c ProxyIPCandidate, probeDomain string) ProxyIPResult {
 }
 
 // resolveProxyIPTargets 把候选主机名解析成可连接的 IP 列表，并剔除
-// Cloudflare 自有网段。返回的第二个值非空表示这是一条错误说明。
-func resolveProxyIPTargets(host string) ([]net.IP, string) {
+// Cloudflare 自有网段。
+//
+// 返回的第二个值非空表示无法继续检测；第三个值为 true 时表示「本机
+// 无法验证」—— 域名解析出来的地址全在 Cloudflare 网段，从本机连不了，
+// 但 Cloudflare 内部的解析结果可能不同，不能直接判死。
+func resolveProxyIPTargets(host string) ([]net.IP, string, bool) {
 	if ip := net.ParseIP(host); ip != nil {
 		if IsCloudflareOwnedIP(ip) {
-			return nil, "属于 Cloudflare 自有网段，不能作为 ProxyIP"
+			// 直接给的是 Cloudflare 的 IP，那就是确定不能用
+			return nil, "属于 Cloudflare 自有网段，不能作为 ProxyIP", false
 		}
-		return []net.IP{ip}, ""
+		return []net.IP{ip}, "", false
 	}
 
 	ips, ok := lookupIPsWithTimeout(host, proxyIPDNSTimeout)
 	if !ok {
-		return nil, "域名解析超时（DNS 无响应）"
+		return nil, "域名解析超时（DNS 无响应）", false
 	}
 	if len(ips) == 0 {
-		return nil, "域名解析失败（DNS 查询不到该域名）"
+		return nil, "域名解析失败（DNS 查询不到该域名）", false
 	}
 
 	var usable []net.IP
@@ -482,9 +508,10 @@ func resolveProxyIPTargets(host string) ([]net.IP, string) {
 		}
 	}
 	if len(usable) == 0 {
-		return nil, "域名解析到 Cloudflare 自有网段，不能作为 ProxyIP"
+		// 解析到 Cloudflare 网段：本机测不了，但别急着判死
+		return nil, "本机 DNS 解析到 Cloudflare 自有网段，无法从本机验证", true
 	}
-	return usable, ""
+	return usable, "", false
 }
 
 // lookupIPsWithTimeout 带硬超时的 DNS 查询。

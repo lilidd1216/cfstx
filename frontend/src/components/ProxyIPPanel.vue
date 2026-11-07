@@ -101,6 +101,9 @@ const candidateCount = computed(() => {
 
 const results = computed(() => props.state.results || [])
 const okResults = computed(() => results.value.filter((r) => r.ok))
+// 本机无法验证的（典型：域名解析到 Cloudflare 自有网段，
+// 但从 Cloudflare 内部访问是通的），单独统计
+const uncertainResults = computed(() => results.value.filter((r) => !r.ok && r.uncertain))
 
 const percent = computed(() => {
   const { done, total } = props.state
@@ -382,9 +385,11 @@ onMounted(loadSources)
           v-for="r in results"
           :key="r.addr"
           class="result-row"
-          :class="{ bad: !r.ok }"
+          :class="{ bad: !r.ok && !r.uncertain, unknown: r.uncertain }"
         >
-          <span class="badge" :class="r.ok ? 'ok' : 'fail'">{{ r.ok ? '可用' : '无效' }}</span>
+          <span class="badge" :class="r.ok ? 'ok' : (r.uncertain ? 'unknown' : 'fail')">
+            {{ r.ok ? '可用' : (r.uncertain ? '待验证' : '无效') }}
+          </span>
           <span class="addr mono">{{ r.addr }}</span>
           <span class="exit">{{ exitLabel(r) }}</span>
           <span class="timing">
@@ -392,6 +397,13 @@ onMounted(loadSources)
           </span>
           <span class="err">{{ r.ok ? '' : r.error }}</span>
         </div>
+      </div>
+
+      <div v-if="uncertainResults.length" class="hint note mt-3 uncertain-note">
+        <strong>「待验证」是什么意思</strong>：这些域名在本机解析出来的是 Cloudflare
+        自己的 IP，从本机没法直连验证。但 Cloudflare 内部访问时解析结果可能不同 ——
+        实测 <code>proxyip.cmliussss.net</code> 在 Worker 里是能正常用的。
+        建议配进去实测，别直接丢掉。
       </div>
 
       <div class="hint note mt-3">
@@ -609,6 +621,11 @@ onMounted(loadSources)
   opacity: 0.62;
 }
 
+.result-row.unknown {
+  border-color: #4a3f2a;
+  background: rgba(232, 163, 61, 0.06);
+}
+
 .badge {
   flex: 0 0 auto;
   font-size: 11px;
@@ -625,6 +642,15 @@ onMounted(loadSources)
 .badge.fail {
   color: #8b8b96;
   background: rgba(139, 139, 150, 0.12);
+}
+
+.badge.unknown {
+  color: #e8a33d;
+  background: rgba(232, 163, 61, 0.16);
+}
+
+.uncertain-note {
+  border-left-color: #e8a33d !important;
 }
 
 .addr {
