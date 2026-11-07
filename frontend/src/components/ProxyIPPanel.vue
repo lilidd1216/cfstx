@@ -83,27 +83,75 @@ function parseCandidate(line) {
   return `${host.toLowerCase()}:${port}`
 }
 
-// 前端先算一遍数量，让用户知道自己粘了多少行（后端会再解析一次）。
-// 去重键和端口补全规则与后端保持一致，否则数字对不上。
+// 一行的去重键（host:port）。先去掉 #备注 再解析，
+// 与后端 ParseProxyIPCandidates 的规则保持一致，否则数字会对不上。
+function candidateKey(line) {
+  let s = String(line || '').trim()
+  if (!s || s.startsWith('#')) return null
+  const hash = s.indexOf('#')
+  if (hash >= 0) s = s.slice(0, hash).trim()
+  if (!s) return null
+  return parseCandidate(s)
+}
+
+// 前端先算一遍数量，让用户知道自己粘了多少行（后端会再解析一次）
 const candidateCount = computed(() => {
   const seen = new Set()
   for (const raw of String(text.value || '').split('\n')) {
-    let line = raw.trim()
-    if (!line || line.startsWith('#')) continue
-    const hash = line.indexOf('#')
-    if (hash >= 0) line = line.slice(0, hash).trim()
-    if (!line) continue
-    const key = parseCandidate(line)
+    const key = candidateKey(raw)
     if (key) seen.add(key)
   }
   return seen.size
 })
+
+// 把新导入的候选并入现有列表，按 host:port 去重。
+// 三个数据源有大量重叠，累加时必须去重，否则重复检测浪费好几分钟。
+function mergeCandidates(newText) {
+  const seen = new Set()
+  const out = []
+  const push = (line) => {
+    const key = candidateKey(line)
+    if (!key || seen.has(key)) return
+    seen.add(key)
+    out.push(String(line).trim())
+  }
+  for (const line of String(text.value || '').split('\n')) push(line)
+  for (const line of String(newText || '').split('\n')) push(line)
+  text.value = out.join('\n')
+}
 
 const results = computed(() => props.state.results || [])
 const okResults = computed(() => results.value.filter((r) => r.ok))
 // 本机无法验证的（典型：域名解析到 Cloudflare 自有网段，
 // 但从 Cloudflare 内部访问是通的），单独统计
 const uncertainResults = computed(() => results.value.filter((r) => !r.ok && r.uncertain))
+
+// v4 / v6 互斥筛选：按 ProxyIP 的出口类型。
+// 出口是 v6 的只能代理到 IPv6 目标，某些场景要按这个挑。
+const v4Only = ref(false)
+const v6Only = ref(false)
+function onV4Change(v) {
+  if (v) v6Only.value = false
+}
+function onV6Change(v) {
+  if (v) v4Only.value = false
+}
+
+const filteredResults = computed(() => {
+  const rs = results.value
+  if (v4Only.value) return rs.filter((r) => r.ok && !r.exitIpv6)
+  if (v6Only.value) return rs.filter((r) => r.ok && r.exitIpv6)
+  return rs
+})
+const filteredOK = computed(() => filteredResults.value.filter((r) => r.ok))
+
+// 复制前 N 名，N 用预设按钮切换
+const TOP_OPTIONS = [3, 5, 10, 20]
+const topN = ref(10)
+
+function topResults() {
+  return filteredOK.value.slice(0, topN.value)
+}
 
 const percent = computed(() => {
   const { done, total } = props.state
@@ -149,8 +197,11 @@ async function importSource(src) {
   importing.value = src.key
   try {
     const r = await httpPost('/api/proxyip/import', { key: src.key })
-    text.value = r.text || ''
-    emit('toast', `已导入「${src.name}」${r.count} 个候选`, 'success')
+    // 累加而不是替换：点哪个加哪个，重复的按 host:port 去掉
+    const before = candidateCount.value
+    mergeCandidates(r.text || '')
+    const added = candidateCount.value - before
+    emit('toast', `「${src.name}」加入 ${added} 个（去重后共 ${candidateCount.value} 个）`, 'success')
   } catch (e) {
     emit('toast', String(e.message || e), 'error')
   } finally {
@@ -204,21 +255,25 @@ async function copy(text, label) {
   emit('toast', ok ? `${label}已复制` : '复制失败', ok ? 'success' : 'error')
 }
 
-function copyProxyIP() {
-  if (!okResults.value.length) {
+// 复制前 N 名的地址列表，一行一个
+function copyTopAddresses() {
+  const list = topResults()
+  if (!list.length) {
     emit('toast', '还没有可用的 ProxyIP', 'warning')
     return
   }
-  const body = okResults.value.map((r) => `PROXYIP=${r.addr}`).join('\n')
-  copy(body, `Workers 变量（${okResults.value.length} 条）`)
+  copy(list.map((r) => r.addr).join('\n'), `前 ${list.length} 个地址`)
 }
 
-function copyAddresses() {
-  if (!okResults.value.length) {
+// 按 edgetunnel 的 PROXYIP 变量格式复制：
+// 源码里用逗号或换行分隔并随机选一个，这里给单行逗号分隔，直接粘就行。
+function copyForEdgeTunnel() {
+  const list = topResults()
+  if (!list.length) {
     emit('toast', '还没有可用的 ProxyIP', 'warning')
     return
   }
-  copy(okResults.value.map((r) => r.addr).join('\n'), `地址列表（${okResults.value.length} 条）`)
+  copy(list.map((r) => r.addr).join(','), `前 ${list.length} 个（PROXYIP 格式）`)
 }
 
 function clearAll() {
@@ -240,7 +295,7 @@ onMounted(loadSources)
       <div class="section-head">
         <v-icon size="18" color="primary">mdi-swap-horizontal-bold</v-icon>
         <span class="section-title">候选列表</span>
-        <span class="section-desc">一行一个：IP、IP:端口、域名都行</span>
+        <span class="section-desc">点下面的源可以累加，重复的自动去掉</span>
       </div>
 
       <v-alert
@@ -268,7 +323,7 @@ onMounted(loadSources)
             {{ s.name }}
             <span v-if="s.count" class="source-count">{{ s.count }}</span>
           </span>
-          <span class="source-desc">{{ importing === s.key ? '抓取中…' : s.description }}</span>
+          <span class="source-desc">{{ importing === s.key ? '加入中…' : s.description }}</span>
         </button>
       </div>
 
@@ -366,23 +421,73 @@ onMounted(loadSources)
         <v-icon size="18" color="primary">mdi-format-list-checks</v-icon>
         <span class="section-title">检测结果</span>
         <span class="section-desc">{{ okResults.length }} 个可用 / 共 {{ results.length }} 个</span>
-        <v-spacer />
-        <v-btn size="small" variant="tonal" prepend-icon="mdi-content-copy" @click="copyProxyIP">
-          复制 Workers 变量
+      </div>
+
+      <!-- v4 / v6 互斥筛选（按出口类型） -->
+      <div class="filter-row">
+        <span class="filter-label">按出口筛选</span>
+        <v-checkbox
+          v-model="v4Only"
+          label="只看 v4 出口"
+          density="compact"
+          hide-details
+          color="primary"
+          class="filter-box"
+          @update:model-value="onV4Change"
+        />
+        <v-checkbox
+          v-model="v6Only"
+          label="只看 v6 出口"
+          density="compact"
+          hide-details
+          color="primary"
+          class="filter-box"
+          @update:model-value="onV6Change"
+        />
+        <span v-if="v4Only || v6Only" class="filter-hint">
+          显示 {{ filteredOK.length }} 个可用
+        </span>
+      </div>
+
+      <!-- 复制区：前 N 名 + edgetunnel 格式 -->
+      <div class="copy-bar">
+        <span class="copy-label">复制前</span>
+        <button
+          v-for="n in TOP_OPTIONS"
+          :key="n"
+          type="button"
+          class="top-btn"
+          :class="{ active: topN === n }"
+          @click="topN = n"
+        >
+          {{ n }}
+        </button>
+        <span class="copy-label">个</span>
+
+        <v-btn size="small" variant="text" @click="copyTopAddresses">
+          复制地址列表
         </v-btn>
-        <v-btn size="small" variant="text" @click="copyAddresses">复制地址列表</v-btn>
+        <v-btn
+          size="small"
+          variant="tonal"
+          color="primary"
+          prepend-icon="mdi-content-copy"
+          @click="copyForEdgeTunnel"
+        >
+          复制为 PROXYIP
+        </v-btn>
       </div>
 
       <div class="copy-tip">
-        <strong>Workers 变量</strong>：<code>PROXYIP=地址:端口</code>，粘到 Workers 的环境变量里。
+        <strong>复制为 PROXYIP</strong>：生成 <code>地址:端口,地址:端口,...</code> 一行，直接粘进
+        edgetunnel 的 <code>PROXYIP</code> 设置（它支持多个，每次随机选一个用）。
         <br />
-        <strong>地址列表</strong>：纯 <code>地址:端口</code>，粘到网页版检测工具时要这种（带
-        <code>PROXYIP=</code> 前缀那类工具认不出来）。
+        <strong>复制地址列表</strong>：一行一个，粘到网页版检测工具或别处用。
       </div>
 
       <div class="result-list">
         <div
-          v-for="r in results"
+          v-for="r in filteredResults"
           :key="r.addr"
           class="result-row"
           :class="{ bad: !r.ok && !r.uncertain, unknown: r.uncertain }"
@@ -397,6 +502,13 @@ onMounted(loadSources)
           </span>
           <span class="err">{{ r.ok ? '' : r.error }}</span>
         </div>
+      </div>
+
+      <div
+        v-if="(v4Only || v6Only) && !filteredResults.length"
+        class="empty-filter"
+      >
+        当前筛选下没有结果 —— 换另一边，或者取消筛选
       </div>
 
       <div v-if="uncertainResults.length" class="hint note mt-3 uncertain-note">
@@ -575,6 +687,80 @@ onMounted(loadSources)
   background: rgba(79, 106, 205, 0.12);
   padding: 1px 4px;
   border-radius: 3px;
+}
+
+/* v4 / v6 筛选 */
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.filter-label {
+  font-size: 12px;
+  color: #8b8b96;
+}
+
+.filter-box {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.filter-box :deep(.v-label) {
+  font-size: 12.5px;
+  opacity: 1;
+}
+
+.filter-hint {
+  font-size: 11.5px;
+  color: #7c9cff;
+}
+
+/* 复制区 */
+.copy-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 10px;
+  flex-wrap: wrap;
+}
+
+.copy-label {
+  font-size: 12px;
+  color: #8b8b96;
+}
+
+.top-btn {
+  min-width: 34px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid #2a2a33;
+  background: #17171c;
+  color: #a1a1aa;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+
+.top-btn:hover {
+  border-color: #4f6acd;
+}
+
+.top-btn.active {
+  border-color: #4f6acd;
+  background: rgba(79, 106, 205, 0.18);
+  color: #c7d2fe;
+  font-weight: 600;
+}
+
+.empty-filter {
+  font-size: 12.5px;
+  color: #71717a;
+  padding: 14px 0;
+  text-align: center;
 }
 
 .copy-tip {

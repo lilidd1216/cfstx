@@ -3,7 +3,9 @@ package task
 import (
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -13,9 +15,10 @@ type ProxyIPSource struct {
 	Key         string   `json:"key"`
 	Name        string   `json:"name"`
 	Description string   `json:"description"`
-	Kind        string   `json:"kind"`  // "remote" 联网抓取 / "builtin" 内置列表
-	URLs        []string `json:"-"`     // 依次尝试，任意一个成功即可
-	Count       int      `json:"count"` // 内置源的数量，联网源为 0
+	Kind        string   `json:"kind"`   // "remote" 联网抓取 / "builtin" 内置列表
+	Format      string   `json:"format"` // "line" IP:端口#备注 / "csv" / "iponly" 纯 IP
+	URLs        []string `json:"-"`      // 依次尝试，任意一个成功即可
+	Count       int      `json:"count"`  // 内置源的数量，联网源为 0
 }
 
 // proxyIPSourceFetchTimeout 是单个 URL 的抓取超时。
@@ -50,18 +53,40 @@ var cmliussssDomains = []string{
 
 // BuiltinProxyIPSources 是界面上「一键导入」的数据源。
 //
-// 只放两个：多了反而让用户不知道该选哪个，也容易给源站造成压力。
+// 前三个来自 bestcf.pages.dev 的 ProxyIP 专区，各自格式不同，
+// 所以导入后统一走 ParseSourceBody 解析。
+// cmliussss 地区域名是内置的，质量相对稳定，保留。
 var BuiltinProxyIPSources = []ProxyIPSource{
 	{
-		Key:         "xiaobei",
-		Name:        "社区优选列表",
-		Description: "社区每日巡检并筛选过的 IP:PORT，自带国家和测速标注",
+		Key:         "xgonce",
+		Name:        "Xgonce",
+		Description: "每 6 小时更新，带速度、机房和延迟标注",
 		Kind:        "remote",
+		Format:      "csv",
 		URLs: []string{
-			// jsDelivr 在国内通常能直连，作为主源
+			"https://cdn.jsdelivr.net/gh/xgonce/Cloudflare_IP@main/result.csv",
+			"https://raw.githubusercontent.com/xgonce/Cloudflare_IP/refs/heads/main/result.csv",
+		},
+	},
+	{
+		Key:         "xiaobei",
+		Name:        "Xiaobei09",
+		Description: "每 3 小时更新，IP:端口 形式，带国家和测速标注",
+		Kind:        "remote",
+		Format:      "line",
+		URLs: []string{
 			"https://cdn.jsdelivr.net/gh/Xiaobei09/proxyip@main/data/valid/all_ltd.txt",
-			// 原始地址作为兜底
 			"https://raw.githubusercontent.com/Xiaobei09/proxyip/main/data/valid/all_ltd.txt",
+		},
+	},
+	{
+		Key:         "mingyu",
+		Name:        "Mingyu",
+		Description: "每半小时更新，只给地址，端口按 443 处理",
+		Kind:        "remote",
+		Format:      "iponly",
+		URLs: []string{
+			"https://ipdb.api.030101.xyz/?type=bestproxy",
 		},
 	},
 	{
@@ -69,6 +94,7 @@ var BuiltinProxyIPSources = []ProxyIPSource{
 		Name:        "cmliussss 地区域名",
 		Description: "官方维护的分地区反代域名，固定 443 端口",
 		Kind:        "builtin",
+		Format:      "line",
 		Count:       len(cmliussssDomains),
 	},
 }
@@ -104,7 +130,7 @@ func FetchProxyIPCandidates(src ProxyIPSource) ([]ProxyIPCandidate, error) {
 			lastReason = err.Error()
 			continue
 		}
-		cands := ParseProxyIPCandidates(string(body))
+		cands := ParseSourceBody(body, src.Format)
 		if len(cands) == 0 {
 			lastReason = "内容为空或格式无法识别"
 			continue
@@ -116,6 +142,106 @@ func FetchProxyIPCandidates(src ProxyIPSource) ([]ProxyIPCandidate, error) {
 		lastReason = "没有可用的数据源地址"
 	}
 	return nil, fmt.Errorf("抓取失败（%s）。网络不通时可以直接打开 %s 复制列表，粘到输入框里", lastReason, src.URLs[0])
+}
+
+// ParseSourceBody 按数据源的格式解析内容。
+//
+// bestcf 上的三个源格式完全不一样，不能都用同一套解析：
+//
+//	xgonce  → CSV：IP,cf-meta-ip,端口,速度(Mbps),CF归属国,机房,TCP延迟,TLS延迟
+//	xiaobei → 行式：IP:端口#备注
+//	mingyu  → 纯 IP，每行一个，端口按 443
+func ParseSourceBody(body []byte, format string) []ProxyIPCandidate {
+	text := string(body)
+	switch format {
+	case "csv":
+		return parseCSVCandidates(text)
+	case "iponly":
+		return parseIPOnlyCandidates(text)
+	default:
+		return ParseProxyIPCandidates(text)
+	}
+}
+
+// parseCSVCandidates 解析 Xgonce 的 result.csv。
+func parseCSVCandidates(text string) []ProxyIPCandidate {
+	out := make([]ProxyIPCandidate, 0, 256)
+	seen := make(map[string]struct{}, 256)
+
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Split(line, ",")
+		if len(fields) < 3 {
+			continue
+		}
+
+		host := strings.TrimSpace(fields[0])
+		if net.ParseIP(host) == nil {
+			// 表头或非法行
+			continue
+		}
+
+		port := proxyIPDefaultPort
+		if p, err := strconv.Atoi(strings.TrimSpace(fields[2])); err == nil && p >= 1 && p <= 65535 {
+			port = p
+		}
+
+		// 备注拼上机房和速度，方便用户判断
+		var noteParts []string
+		if len(fields) > 5 {
+			if colo := strings.TrimSpace(fields[5]); colo != "" {
+				noteParts = append(noteParts, colo)
+			}
+		}
+		if len(fields) > 3 {
+			if speed := strings.TrimSpace(fields[3]); speed != "" {
+				noteParts = append(noteParts, speed+"Mbps")
+			}
+		}
+
+		key := net.JoinHostPort(host, strconv.Itoa(port))
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, ProxyIPCandidate{
+			Host: host,
+			Port: port,
+			Note: strings.Join(noteParts, " "),
+		})
+	}
+	return out
+}
+
+// parseIPOnlyCandidates 解析只有地址的列表（Mingyu）。
+func parseIPOnlyCandidates(text string) []ProxyIPCandidate {
+	out := make([]ProxyIPCandidate, 0, len(text)/16+1)
+	seen := make(map[string]struct{})
+
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		// 兼容偶尔带了端口或备注的情况
+		if i := strings.IndexAny(line, "# "); i >= 0 {
+			line = strings.TrimSpace(line[:i])
+		}
+		host, port, ok := splitCandidate(line)
+		if !ok {
+			continue
+		}
+		key := net.JoinHostPort(host, strconv.Itoa(port))
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, ProxyIPCandidate{Host: host, Port: port})
+	}
+	return out
 }
 
 // fetchSourceURL 抓一个地址的内容。

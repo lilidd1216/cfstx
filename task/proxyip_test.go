@@ -185,3 +185,60 @@ func TestParseProxyIPTrace(t *testing.T) {
 		t.Error("缺少 ip 字段时不应该算成功")
 	}
 }
+
+// Xgonce 的 CSV 格式：IP,cf-meta-ip,端口,速度(Mbps),CF归属国,机房,TCP延迟,TLS延迟
+func TestParseCSVCandidates(t *testing.T) {
+	csv := `IP,cf-meta-ip,端口,速度(Mbps),CF归属国,机房,TCP延迟(ms),TLS延迟(ms)
+85.192.42.198,85.192.42.198,443,4.11,AT,FRA,162.47,173.93
+43.169.18.179,43.168.103.148,443,21.14,BR,GRU,152.45,164.73
+35.182.59.30,35.182.59.30,2087,109.15,CA,YUL,100.9,81.38
+85.192.42.198,85.192.42.198,443,4.11,AT,FRA,162.47,173.93`
+
+	got := ParseSourceBody([]byte(csv), "csv")
+
+	if len(got) != 3 {
+		t.Fatalf("应解析出 3 条（表头跳过、重复去掉），实际 %d 条：%+v", len(got), got)
+	}
+	if got[0].Host != "85.192.42.198" || got[0].Port != 443 {
+		t.Errorf("第 1 条 = %+v", got[0])
+	}
+	if !strings.Contains(got[0].Note, "FRA") {
+		t.Errorf("备注应包含机房 FRA，实际 %q", got[0].Note)
+	}
+	if got[2].Port != 2087 {
+		t.Errorf("第 3 条端口应为 2087，实际 %d", got[2].Port)
+	}
+}
+
+// Mingyu 的纯 IP 格式
+func TestParseIPOnlyCandidates(t *testing.T) {
+	text := `8.222.219.140
+47.57.245.232
+# 这是注释
+8.218.70.238
+8.222.219.140
+2606:4700::1`
+
+	got := ParseSourceBody([]byte(text), "iponly")
+
+	if len(got) != 4 {
+		t.Fatalf("应解析出 4 条（去重、跳注释），实际 %d 条：%+v", len(got), got)
+	}
+	if got[0].Port != 443 {
+		t.Errorf("默认端口应为 443，实际 %d", got[0].Port)
+	}
+	if got[3].Host != "2606:4700::1" {
+		t.Errorf("IPv6 应保留，实际 %+v", got[3])
+	}
+}
+
+// 三个源的格式不同，ParseSourceBody 要能分别处理
+func TestParseSourceBodyDispatch(t *testing.T) {
+	lineText := "1.2.3.4:8443#HKG 39.84MB/s\n5.6.7.8"
+	if got := ParseSourceBody([]byte(lineText), "line"); len(got) != 2 {
+		t.Fatalf("line 格式应解析出 2 条，实际 %d", len(got))
+	}
+	if got := ParseSourceBody([]byte(lineText), ""); len(got) != 2 {
+		t.Fatalf("未指定格式时应走默认解析，实际 %d 条", len(got))
+	}
+}
