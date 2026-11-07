@@ -61,6 +61,14 @@ const (
 	proxyIPDefaultPort    = 443
 	proxyIPDefaultConc    = 32
 	proxyIPMaxConcurrency = 64
+
+	// 单个域名最多尝试的 IP 数，以及域名内部的连接并发。
+	//
+	// 实测 ProxyIP.FR.CMLiussss.net 一次解析出 50 个 IPv4，其中 33 个能用；
+	// 若对 50 个全部并发，12 个候选就能瞬间打出 600 条连接，
+	// 把本机连接数和 DNS 查询一起拖垮，反而产生大量误判。
+	proxyIPMaxIPsPerHost = 12
+	proxyIPIPConcurrency = 6
 )
 
 // ProxyIPCandidate 是一个待检测的候选地址。
@@ -387,8 +395,10 @@ func probeOneProxyIP(c ProxyIPCandidate, probeDomain string) ProxyIPResult {
 	}
 
 	// 2. 多个 IP 并行尝试，取第一个成功的。
-	// 串行太慢：一个域名常常解析出 IPv6 + IPv4 两条，IPv6 往往不通，
-	// 串着试要等两倍时间。
+	//
+	// 限流两个维度：最多试前 maxIPsPerHost 个 IP，域名内部并发不超过
+	// ipConcurrency。全部放开会把本机连接数打满（见常量注释）。
+	// 第一个成功就取消其余，避免白等超时。
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -396,18 +406,39 @@ func probeOneProxyIP(c ProxyIPCandidate, probeDomain string) ProxyIPResult {
 		res ProxyIPResult
 		ok  bool
 	}
-	ch := make(chan outcome, len(targets))
-	for _, ip := range targets {
+
+	limit := len(targets)
+	if limit > proxyIPMaxIPsPerHost {
+		limit = proxyIPMaxIPsPerHost
+	}
+
+	ch := make(chan outcome, limit)
+	sem := make(chan struct{}, proxyIPIPConcurrency)
+	var wg sync.WaitGroup
+
+	for _, ip := range targets[:limit] {
+		if ctx.Err() != nil {
+			break
+		}
+		sem <- struct{}{} // 并发满了就在这里等，天然限流
+		wg.Add(1)
 		go func(ip net.IP) {
+			defer wg.Done()
+			defer func() { <-sem }()
 			addr := net.JoinHostPort(ip.String(), strconv.Itoa(port))
 			r, ok := probeCandidateAddr(ctx, addr, probeDomain)
 			ch <- outcome{r, ok}
 		}(ip)
 	}
 
+	// 全部 goroutine 结束后关闭 channel，下面的 range 才能退出
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+
 	var lastErr string
-	for range targets {
-		o := <-ch
+	for o := range ch {
 		if o.ok {
 			cancel() // 让其余尝试尽快退出
 			o.res.Host = c.Host

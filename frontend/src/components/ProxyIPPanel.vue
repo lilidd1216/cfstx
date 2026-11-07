@@ -207,7 +207,7 @@ function copyProxyIP() {
     return
   }
   const body = okResults.value.map((r) => `PROXYIP=${r.addr}`).join('\n')
-  copy(body, `PROXYIP 配置（${okResults.value.length} 条）`)
+  copy(body, `Workers 变量（${okResults.value.length} 条）`)
 }
 
 function copyAddresses() {
@@ -215,7 +215,7 @@ function copyAddresses() {
     emit('toast', '还没有可用的 ProxyIP', 'warning')
     return
   }
-  copy(okResults.value.map((r) => r.addr).join('\n'), '可用地址')
+  copy(okResults.value.map((r) => r.addr).join('\n'), `地址列表（${okResults.value.length} 条）`)
 }
 
 function clearAll() {
@@ -365,9 +365,16 @@ onMounted(loadSources)
         <span class="section-desc">{{ okResults.length }} 个可用 / 共 {{ results.length }} 个</span>
         <v-spacer />
         <v-btn size="small" variant="tonal" prepend-icon="mdi-content-copy" @click="copyProxyIP">
-          复制 PROXYIP
+          复制 Workers 变量
         </v-btn>
-        <v-btn size="small" variant="text" @click="copyAddresses">复制地址</v-btn>
+        <v-btn size="small" variant="text" @click="copyAddresses">复制地址列表</v-btn>
+      </div>
+
+      <div class="copy-tip">
+        <strong>Workers 变量</strong>：<code>PROXYIP=地址:端口</code>，粘到 Workers 的环境变量里。
+        <br />
+        <strong>地址列表</strong>：纯 <code>地址:端口</code>，粘到网页版检测工具时要这种（带
+        <code>PROXYIP=</code> 前缀那类工具认不出来）。
       </div>
 
       <div class="result-list">
@@ -552,6 +559,26 @@ onMounted(loadSources)
 .hint code {
   font-family: 'Cascadia Mono', 'Consolas', monospace;
   font-size: 11.5px;
+  color: #a5b4fc;
+  background: rgba(79, 106, 205, 0.12);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.copy-tip {
+  font-size: 11.5px;
+  line-height: 1.8;
+  color: #71717a;
+  margin: -4px 0 10px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: #17171c;
+  border-left: 3px solid #3d3d47;
+}
+
+.copy-tip code {
+  font-family: 'Cascadia Mono', 'Consolas', monospace;
+  font-size: 11px;
   color: #a5b4fc;
   background: rgba(79, 106, 205, 0.12);
   padding: 1px 4px;
