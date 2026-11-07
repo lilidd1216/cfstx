@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import ConfigPanel from './components/ConfigPanel.vue'
@@ -44,6 +44,11 @@ const snackbar = ref({ show: false, text: '', color: 'success' })
 const version = ref('v1.0.0')
 const elapsed = ref(0)
 const currentPage = ref('prefer-ip')
+
+// 切换页面时回到顶部：从较长的页面切过来时，滚动位置不会残留
+watch(currentPage, () => {
+  window.scrollTo({ top: 0, behavior: 'auto' })
+})
 const updateDialog = ref(false)
 const updateInfo = ref(null)
 const diagnosis = ref(null)

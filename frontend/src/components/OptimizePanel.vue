@@ -1,23 +1,33 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 
 const props = defineProps({
   results: { type: Array, default: () => [] },
 })
 const emit = defineEmits(['toast'])
 
+const STORAGE_DOMAIN = 'cfstx.hosts.domain'
+const STORAGE_IP = 'cfstx.hosts.ip'
+
 const hosts = ref({ isAdmin: false, hostsPath: '', entries: [], backupDir: '' })
-const domain = ref('')
-const selectedIP = ref('')
+// 记住上次填写的域名与 IP，切换页面或重启后不用重填
+const domain = ref(localStorage.getItem(STORAGE_DOMAIN) || '')
+const selectedIP = ref(localStorage.getItem(STORAGE_IP) || '')
 const busy = ref(false)
 
-// hosts 只能映射 IP、不能指定端口，所以只列 443 端口的结果
+watch(domain, (v) => localStorage.setItem(STORAGE_DOMAIN, v || ''))
+watch(selectedIP, (v) => localStorage.setItem(STORAGE_IP, v || ''))
+
+// hosts 只能映射 IP、不能指定端口，所以只列 443 端口的结果。
+// 用点击列表而不是下拉框：避免浮层组件在 WebView2 中的兼容问题。
 const candidates = computed(() =>
   props.results
     .filter((r) => (r.port || 443) === 443)
     .map((r) => ({
-      title: `${r.ip}   ${r.delay.toFixed(0)}ms   ${r.speed.toFixed(1)}MB/s   ${r.colo}`,
       value: r.ip,
+      delay: r.delay.toFixed(0),
+      speed: r.speed.toFixed(1),
+      colo: r.colo,
     }))
 )
 
@@ -129,39 +139,48 @@ onMounted(loadHosts)
         当前不是管理员权限，无法修改 hosts。请关闭 CFSTX，右键选择「以管理员身份运行」后再试。
       </v-alert>
 
-      <v-row dense>
-        <v-col cols="12" md="5">
-          <v-text-field
-            v-model="domain"
-            label="域名"
-            placeholder="fast3.example.com"
-            density="compact"
-            prepend-inner-icon="mdi-web"
-          />
-        </v-col>
-        <v-col cols="12" md="5">
-          <v-select
-            v-model="selectedIP"
-            :items="candidates"
-            label="优选 IP（仅 443 端口）"
-            density="compact"
-            prepend-inner-icon="mdi-ip-network-outline"
-            no-data-text="先跑一次测速，或结果里没有 443 端口的 IP"
-          />
-        </v-col>
-        <v-col cols="12" md="2" class="d-flex align-center">
-          <v-btn
-            block
-            color="primary"
-            variant="flat"
-            :loading="busy"
-            :disabled="!hosts.isAdmin || !domain.trim() || !selectedIP"
-            @click="apply"
-          >
-            应用
-          </v-btn>
-        </v-col>
-      </v-row>
+      <v-text-field
+        v-model="domain"
+        label="域名"
+        placeholder="fast3.example.com"
+        density="compact"
+        prepend-inner-icon="mdi-web"
+        clearable
+        autocomplete="off"
+        hide-details="auto"
+      />
+
+      <div class="ip-label">选择要应用的 IP（仅列出 443 端口的结果）</div>
+
+      <div v-if="!candidates.length" class="empty">
+        暂无可用 IP —— 先在「优选IP」页面跑一次测速
+      </div>
+
+      <div v-else class="ip-list">
+        <button
+          v-for="c in candidates"
+          :key="c.value"
+          type="button"
+          class="ip-item"
+          :class="{ active: selectedIP === c.value }"
+          @click="selectedIP = c.value"
+        >
+          <span class="ip-addr mono">{{ c.value }}</span>
+          <span class="ip-meta">{{ c.delay }}ms · {{ c.speed }}MB/s · {{ c.colo }}</span>
+        </button>
+      </div>
+
+      <div class="d-flex justify-end mt-3">
+        <v-btn
+          color="primary"
+          variant="flat"
+          :loading="busy"
+          :disabled="!hosts.isAdmin || !domain.trim() || !selectedIP"
+          @click="apply"
+        >
+          应用到 Hosts
+        </v-btn>
+      </div>
 
       <div class="hint note">
         <strong>原理</strong>：hosts 让这台电脑把域名直接解析到你选的 IP，绕过 DNS。
@@ -299,6 +318,56 @@ onMounted(loadHosts)
   font-size: 13px;
   color: #71717a;
   padding: 8px 0;
+}
+
+/* IP 候选列表 */
+.ip-label {
+  font-size: 12px;
+  color: #8b8b96;
+  margin: 16px 0 8px;
+}
+
+.ip-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.ip-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: 6px;
+  border: 1px solid #26262e;
+  background: #17171c;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.ip-item:hover {
+  border-color: #4f6acd;
+}
+
+.ip-item.active {
+  border-color: #4f6acd;
+  background: rgba(79, 106, 205, 0.14);
+}
+
+.ip-addr {
+  font-size: 13px;
+  color: #e4e4e7;
+  min-width: 118px;
+}
+
+.ip-meta {
+  font-size: 12px;
+  color: #8b8b96;
 }
 
 .entry {
