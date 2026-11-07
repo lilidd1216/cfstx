@@ -181,7 +181,7 @@ async function apply() {
   try {
     await httpPost('/api/hosts/apply', { domain: d, ip })
     await loadHosts()
-    emit('toast', `已写入 hosts：${ip} → ${d}`, 'success')
+    emit('toast', `已写入 hosts：${ip} → ${d}（DNS 缓存已刷新）`, 'success')
   } catch (e) {
     emit('toast', String(e.message || e), 'error')
   } finally {
@@ -324,6 +324,8 @@ onMounted(loadHosts)
 
       <div class="hint note">
         <strong>原理</strong>：hosts 让这台电脑把域名直接解析到你选的 IP，绕过 DNS。
+        <br />
+        <strong>生效</strong>：写入后会自动刷新 DNS 缓存，不用重启电脑，浏览器强制刷新（Ctrl+F5）即可。
         <br />
         <strong>注意</strong>：IP 失效后该域名会打不开，重新测速再应用一次即可；修改前会自动备份原 hosts。
       </div>

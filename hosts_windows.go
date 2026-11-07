@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"gitee.com/liliaic/cfstx/task"
@@ -155,7 +157,26 @@ func (a *App) ApplyHosts(domain, ip string) (string, error) {
 	if err := os.WriteFile(p, []byte(b.String()), 0o644); err != nil {
 		return "", fmt.Errorf("写入 hosts 失败：%w", err)
 	}
+
+	// 写入成功后立即清 DNS 缓存。
+	// hosts 的优先级高于 DNS，但 Windows 的 DNS Client 服务仍会缓存
+	// 之前的解析结果，不清理的话浏览器可能还连着旧 IP，用户会以为没生效。
+	// 这一步需要管理员权限，而上面已经检查过了。
+	_ = flushDNS()
+
 	return backup, nil
+}
+
+// flushDNS 清理 Windows 的 DNS 客户端缓存。
+func flushDNS() error {
+	cmd := exec.Command("ipconfig", "/flushdns")
+	// 不弹黑框
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // RemoveHosts 删除 hosts 中的 CFSTX 区块，其余内容保持不变。
@@ -181,6 +202,9 @@ func (a *App) RemoveHosts() error {
 	if err := os.WriteFile(p, []byte(strings.TrimRight(body, "\r\n")+"\r\n"), 0o644); err != nil {
 		return fmt.Errorf("写入 hosts 失败：%w", err)
 	}
+
+	// 删除后同样清缓存，否则域名还会停留在刚删掉的那条记录上
+	_ = flushDNS()
 	return nil
 }
 
