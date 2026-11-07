@@ -167,6 +167,14 @@ type App struct {
 
 	// 本次运行的过程日志，供导出分析
 	logs []LogEntry
+
+	// ProxyIP 检测的独立状态，不占用上面的测速状态
+	proxyMu      sync.Mutex
+	proxyRunning bool
+	proxyDone    int
+	proxyTotal   int
+	proxyDomain  string
+	proxyResults []task.ProxyIPResult
 }
 
 // appendLog 追加一条运行日志（最多保留最近 5000 条）。

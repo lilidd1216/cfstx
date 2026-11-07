@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"embed"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -18,11 +17,12 @@ import (
 type API struct {
 	app    *App
 	hub    *EventHub
-	assets embed.FS
+	assets fs.FS
 }
 
-// NewAPI 创建 API 实例。
-func NewAPI(app *App, hub *EventHub, assets embed.FS) *API {
+// NewAPI 创建 API 实例。assets 用 fs.FS 而不是 embed.FS，
+// 这样开发时可以直接指向磁盘目录调试前端。
+func NewAPI(app *App, hub *EventHub, assets fs.FS) *API {
 	return &API{app: app, hub: hub, assets: assets}
 }
 
@@ -91,6 +91,43 @@ func (a *API) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, map[string]bool{"ok": true})
+
+	case path == "/api/proxyip/sources" && r.Method == http.MethodGet:
+		writeJSON(w, a.app.GetProxyIPSources())
+
+	case path == "/api/proxyip/import" && r.Method == http.MethodPost:
+		var body struct {
+			Key string `json:"key"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		text, count, err := a.app.ImportProxyIPSource(body.Key)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+		writeJSON(w, map[string]any{"text": text, "count": count})
+
+	case path == "/api/proxyip/check" && r.Method == http.MethodPost:
+		var req ProxyIPCheckRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := a.app.StartProxyIPCheck(req); err != nil {
+			writeError(w, http.StatusConflict, err)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+
+	case path == "/api/proxyip/stop" && r.Method == http.MethodPost:
+		a.app.StopProxyIPCheck()
+		writeJSON(w, map[string]bool{"ok": true})
+
+	case path == "/api/proxyip/status" && r.Method == http.MethodGet:
+		writeJSON(w, a.app.GetProxyIPStatus())
 
 	case path == "/api/test/start" && r.Method == http.MethodPost:
 		var cfg Config

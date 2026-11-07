@@ -6,6 +6,7 @@ import ConfigPanel from './components/ConfigPanel.vue'
 import ResultTable from './components/ResultTable.vue'
 import HistoryDialog from './components/HistoryDialog.vue'
 import OptimizePanel from './components/OptimizePanel.vue'
+import ProxyIPPanel from './components/ProxyIPPanel.vue'
 
 const config = ref({
   threads: 200,
@@ -45,6 +46,19 @@ const version = ref('v1.0.0')
 const elapsed = ref(0)
 const currentPage = ref('prefer-ip')
 
+// ProxyIP 检测状态：由 SSE 事件驱动，面板只负责展示和发请求
+const proxyIPState = ref({
+  running: false,
+  done: 0,
+  total: 0,
+  okCount: 0,
+  domain: '',
+  results: [],
+  finished: false,
+  stopped: false,
+  seconds: 0,
+})
+
 // 切换页面时回到顶部：从较长的页面切过来时，滚动位置不会残留
 watch(currentPage, () => {
   window.scrollTo({ top: 0, behavior: 'auto' })
@@ -68,6 +82,7 @@ let es = null
 // 导航菜单：后续新增页面只需在此追加
 const navItems = [
   { key: 'prefer-ip', title: '优选IP', icon: 'mdi-map-marker-radius-outline' },
+  { key: 'proxyip', title: 'ProxyIP', icon: 'mdi-swap-horizontal-bold' },
   { key: 'optimize', title: '优化工具', icon: 'mdi-tools' },
 ]
 
@@ -75,6 +90,10 @@ const pageMeta = {
   'prefer-ip': {
     title: '优选IP',
     desc: '测速 Cloudflare CDN 各 IP 的延迟与下载速度，筛出当前网络下最快的节点',
+  },
+  proxyip: {
+    title: 'ProxyIP',
+    desc: '检测哪些第三方服务器真的能作为反代中继，筛出当前网络下可用的 ProxyIP',
   },
   optimize: {
     title: '优化工具',
@@ -537,6 +556,46 @@ function handleEvent(event, data) {
     case 'update:progress':
       downloadProgress.value = data?.percent || 0
       break
+
+    // ---- ProxyIP 检测 ----
+    case 'proxyip:started':
+      proxyIPState.value = {
+        running: true,
+        done: 0,
+        total: data?.total || 0,
+        okCount: 0,
+        domain: data?.domain || '',
+        results: [],
+        finished: false,
+        stopped: false,
+        seconds: 0,
+      }
+      break
+
+    case 'proxyip:progress':
+      proxyIPState.value.done = data?.done || 0
+      proxyIPState.value.okCount = data?.okCount || 0
+      if (data?.result) proxyIPState.value.results.push(data.result)
+      break
+
+    case 'proxyip:finished':
+      proxyIPState.value = {
+        running: false,
+        done: data?.done || 0,
+        total: data?.total || 0,
+        okCount: data?.okCount || 0,
+        domain: data?.domain || proxyIPState.value.domain,
+        results: data?.results || proxyIPState.value.results,
+        finished: true,
+        stopped: !!data?.stopped,
+        seconds: data?.seconds || 0,
+      }
+      if (data?.stopped) {
+        toast(`检测已停止，${proxyIPState.value.okCount} 个可用`, 'info')
+      } else {
+        toast(`检测完成，${proxyIPState.value.okCount} 个 ProxyIP 可用`, 'success')
+      }
+      break
   }
 }
 
@@ -553,10 +612,32 @@ function bindEvents() {
   }
 }
 
+// 页面刷新后把上一次的 ProxyIP 检测结果捞回来，
+// 否则跑了几分钟的 562 条结果一刷新就没了
+async function restoreProxyIPState() {
+  try {
+    const st = await httpGet('/api/proxyip/status')
+    const rs = st?.results || []
+    if (!st?.running && rs.length === 0) return
+    proxyIPState.value = {
+      running: !!st.running,
+      done: st.done || 0,
+      total: st.total || 0,
+      okCount: rs.filter((r) => r.ok).length,
+      domain: st.domain || '',
+      results: rs,
+      finished: !st.running,
+      stopped: false,
+      seconds: 0,
+    }
+  } catch (_) { /* 忽略 */ }
+}
+
 onMounted(async () => {
   bindEvents()
   await loadConfig()
   await loadHistory()
+  await restoreProxyIPState()
   try {
     const v = await httpGet('/api/version')
     if (v?.version) version.value = v.version
@@ -765,6 +846,12 @@ onBeforeUnmount(() => {
           @copied="handleCopied"
         />
         </template>
+
+        <ProxyIPPanel
+          v-else-if="currentPage === 'proxyip'"
+          :state="proxyIPState"
+          @toast="(text, color) => toast(text, color)"
+        />
 
         <OptimizePanel
           v-else-if="currentPage === 'optimize'"
