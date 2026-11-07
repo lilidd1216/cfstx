@@ -3,6 +3,51 @@
 > 完整版本历史。最新版本见 [Releases](https://gitee.com/liliaic/cfstx/releases)。
 
 
+### v1.2.12
+
+**更新检查改成双源：Gitee 挂了还能走 GitHub**
+
+以前版本检查只问 Gitee。Gitee 一旦不可用（账号、审核、网络），更新功能就彻底失效。
+
+现在按顺序尝试两个平台：
+
+```text
+① 问 Gitee  → 有新版就用它
+② Gitee 没有 / 连不上 → 问 GitHub
+```
+
+**顺序为什么是 Gitee 在前**：用户绝大多数在国内，Gitee 直连更快也更稳。GitHub 只做兜底。
+
+**「没有新版」不算失败**：Gitee 返回的版本号比当前旧时，会继续问 GitHub。这样两边发布不同步也不会漏掉更新。
+
+**同步修的两个小问题**
+
+| 问题 | 说明 |
+|---|---|
+| Gitee 的 Release 接口不返回 `html_url` | 这个字段一直是空的，前端只能退到固定的 Releases 首页。现在按 tag 自己拼 |
+| GitHub API 不带 `User-Agent` 返回 403 | 已加上，同时带 `Accept: application/vnd.github+json` |
+
+**发布渠道增加 GitHub**
+
+- 仓库镜像：https://github.com/lilidd1216/cfstx
+- Release 同步发布，附件完全一致
+- README 里的下载、文档、相关链接都改成双平台表格
+
+> GitHub 在国内访问不稳定，**Gitee 仍然是国内用户的推荐下载渠道**。
+
+**新增 `publish.ps1`**
+
+一次构建，两个平台同时发布：
+
+```powershell
+.\publish.ps1              # 构建 + 发布
+.\publish.ps1 -SkipBuild   # 用已有产物发布
+.\publish.ps1 -DryRun      # 只检查
+```
+
+- 更新说明自动从本文件提取对应版本段落
+- Release 和附件都幂等，重复跑不会重复创建
+
 ### v1.2.11
 
 **修复：把「直连 Cloudflare 的入口 IP」误判成了可用 ProxyIP**
