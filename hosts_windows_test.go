@@ -182,14 +182,22 @@ func TestValidateHostsInput(t *testing.T) {
 		{"TXT 格式 443", "fast3.example.com", "52.74.51.158:443#SIN 34.58MB/s", "fast3.example.com", "52.74.51.158", ""},
 		{"TXT 格式 非443", "fast3.example.com", "27.44.142.135:10001#HKG 39.84MB/s", "", "", "端口不能用"},
 		{"带备注无端口", "fast3.example.com", "104.16.0.1#HKG", "fast3.example.com", "104.16.0.1", ""},
+		// hosts 不支持通配符，必须逐个写全
+		{"通配符域名", "*.lds1216.ccwu.cc", "1.2.3.4", "", "", "不支持通配符"},
+		// 多个域名：换行 / 逗号 / 分号 / 空格都支持
+		{"换行分隔", "a.example.com\nb.example.com", "1.2.3.4", "a.example.com,b.example.com", "1.2.3.4", ""},
+		{"逗号分隔", "a.example.com,b.example.com", "1.2.3.4", "a.example.com,b.example.com", "1.2.3.4", ""},
+		{"分号分隔", "a.example.com; b.example.com", "1.2.3.4", "a.example.com,b.example.com", "1.2.3.4", ""},
+		{"多域名去重", "a.example.com a.example.com\nA.EXAMPLE.COM", "1.2.3.4", "a.example.com", "1.2.3.4", ""},
+		{"多域名中有一个通配符", "a.example.com\n*.b.example.com", "1.2.3.4", "", "", "不支持通配符"},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			gotDomain, gotIP, err := validateHostsInput(c.domain, c.ip)
+			gotDomains, gotIP, err := validateHostsInput(c.domain, c.ip)
 			if c.wantErr != "" {
 				if err == nil {
-					t.Fatalf("期望报错 %q，实际通过（domain=%q ip=%q）", c.wantErr, gotDomain, gotIP)
+					t.Fatalf("期望报错 %q，实际通过（domains=%v ip=%q）", c.wantErr, gotDomains, gotIP)
 				}
 				if !strings.Contains(err.Error(), c.wantErr) {
 					t.Errorf("错误信息 = %q，期望包含 %q", err.Error(), c.wantErr)
@@ -199,12 +207,57 @@ func TestValidateHostsInput(t *testing.T) {
 			if err != nil {
 				t.Fatalf("意外报错: %v", err)
 			}
+			gotDomain := strings.Join(gotDomains, ",")
 			if gotDomain != c.wantDomain {
-				t.Errorf("domain = %q，期望 %q", gotDomain, c.wantDomain)
+				t.Errorf("domains = %q，期望 %q", gotDomain, c.wantDomain)
 			}
 			if gotIP != c.wantIP {
 				t.Errorf("ip = %q，期望 %q", gotIP, c.wantIP)
 			}
 		})
+	}
+}
+
+// 多个域名要写成多条记录，一行一个，都指向同一个 IP。
+func TestBuildHostsBlock(t *testing.T) {
+	got := buildHostsBlock([]string{"a.example.com", "b.example.com"}, "1.2.3.4")
+	want := hostsBeginMarker + "\r\n" +
+		"1.2.3.4 a.example.com\r\n" +
+		"1.2.3.4 b.example.com\r\n" +
+		hostsEndMarker + "\r\n"
+	if got != want {
+		t.Errorf("生成内容不对：\n got=%q\nwant=%q", got, want)
+	}
+
+	// 单个域名
+	got = buildHostsBlock([]string{"fast3.example.com"}, "104.16.0.1")
+	want = hostsBeginMarker + "\r\n104.16.0.1 fast3.example.com\r\n" + hostsEndMarker + "\r\n"
+	if got != want {
+		t.Errorf("单域名生成内容不对：\n got=%q\nwant=%q", got, want)
+	}
+}
+
+// 写入的区块能被 readHostsEntries 正确读回来 —— 覆盖「应用 → 展示」的往返。
+func TestHostsBlockMultiDomainRoundTrip(t *testing.T) {
+	block := buildHostsBlock([]string{"a.example.com", "b.example.com"}, "1.2.3.4")
+	path := filepath.Join(t.TempDir(), "hosts")
+	if err := os.WriteFile(path, []byte("127.0.0.1 localhost\r\n\r\n"+block), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := readHostsEntries(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("应读回 2 条，实际 %d 条：%+v", len(entries), entries)
+	}
+	for _, e := range entries {
+		if e.IP != "1.2.3.4" {
+			t.Errorf("IP = %q", e.IP)
+		}
+	}
+	if entries[0].Domain != "a.example.com" || entries[1].Domain != "b.example.com" {
+		t.Errorf("域名顺序不对：%+v", entries)
 	}
 }

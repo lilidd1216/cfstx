@@ -82,13 +82,45 @@ func (a *App) GetHostsStatus() HostsStatus {
 	}
 }
 
+// splitDomains 把用户输入的域名列表拆开。
+//
+// hosts 文件只做精确匹配，不支持 *.example.com 这种通配符 ——
+// 所以想覆盖多个子域名，只能一行一个写全。
+// 这里接受换行、逗号、分号、空格分隔，并对每个域名做归一化与去重。
+func splitDomains(s string) []string {
+	fields := strings.FieldsFunc(s, func(r rune) bool {
+		switch r {
+		case '\n', '\r', ',', ';', ' ', '\t':
+			return true
+		}
+		return false
+	})
+
+	out := make([]string, 0, len(fields))
+	seen := make(map[string]struct{}, len(fields))
+	for _, f := range fields {
+		d := task.NormalizeProbeDomain(f)
+		if d == "" {
+			continue
+		}
+		if _, dup := seen[d]; dup {
+			continue
+		}
+		seen[d] = struct{}{}
+		out = append(out, d)
+	}
+	return out
+}
+
 // validateHostsInput 规范化并校验写入 hosts 的域名与 IP。
 //
 // 用户多半是直接从浏览器地址栏复制过来的（带 https:// 和末尾斜杠），
 // 先归一化成纯 hostname。否则会卡在格式校验上，报「域名格式不正确」，
 // 用户还不知道该怎么改。
-func validateHostsInput(domain, ip string) (string, string, error) {
-	domain = task.NormalizeProbeDomain(domain)
+//
+// 第一个返回值是规范化后的域名列表，多个域名会写成多条 hosts 记录。
+func validateHostsInput(domain, ip string) ([]string, string, error) {
+	domains := splitDomains(domain)
 	ip = strings.TrimSpace(ip)
 
 	// 用户可能直接粘了 TXT 导出里的格式：1.2.3.4:10001#HKG 39.84MB/s。
@@ -102,32 +134,39 @@ func validateHostsInput(domain, ip string) (string, string, error) {
 	// 静默去掉端口会写出一条「看起来成功、实际连不上」的记录。
 	if h, port, err := net.SplitHostPort(ip); err == nil {
 		if port != "443" {
-			return "", "", fmt.Errorf(
+			return nil, "", fmt.Errorf(
 				"%s 端口不能用：hosts 只做域名解析，浏览器访问 https 固定走 443，写进去会连不上", port)
 		}
 		ip = h
 	}
 	ip = strings.Trim(ip, "[]")
 
-	if domain == "" {
-		return "", "", fmt.Errorf("请填写域名")
+	if len(domains) == 0 {
+		return nil, "", fmt.Errorf("请填写域名")
 	}
 	if ip == "" {
-		return "", "", fmt.Errorf("请选择一个 IP")
+		return nil, "", fmt.Errorf("请选择一个 IP")
 	}
-	if strings.ContainsAny(domain, " \t\r\n/:?#") || strings.Contains(domain, "..") {
-		return "", "", fmt.Errorf("域名格式不正确：%s", domain)
+	for _, d := range domains {
+		if strings.Contains(d, "*") {
+			return nil, "", fmt.Errorf(
+				"hosts 不支持通配符：%s。请把要用到的子域名逐个写全，用换行或逗号分隔", d)
+		}
+		if strings.ContainsAny(d, "/:?#") || strings.Contains(d, "..") {
+			return nil, "", fmt.Errorf("域名格式不正确：%s", d)
+		}
 	}
 	if net.ParseIP(ip) == nil {
-		return "", "", fmt.Errorf("IP 格式不正确：%s", ip)
+		return nil, "", fmt.Errorf("IP 格式不正确：%s", ip)
 	}
-	return domain, ip, nil
+	return domains, ip, nil
 }
 
-// ApplyHosts 把 domain → ip 写入 hosts 的 CFSTX 区块，覆盖旧条目。
+// ApplyHosts 把 domain(s) → ip 写入 hosts 的 CFSTX 区块，覆盖旧条目。
+// domain 可以是多个域名，用换行 / 逗号 / 分号 / 空格分隔。
 // 返回本次备份文件的路径。
 func (a *App) ApplyHosts(domain, ip string) (string, error) {
-	domain, ip, err := validateHostsInput(domain, ip)
+	domains, ip, err := validateHostsInput(domain, ip)
 	if err != nil {
 		return "", err
 	}
@@ -150,9 +189,7 @@ func (a *App) ApplyHosts(domain, ip string) (string, error) {
 	var b strings.Builder
 	b.WriteString(strings.TrimRight(body, "\r\n"))
 	b.WriteString("\r\n\r\n")
-	b.WriteString(hostsBeginMarker + "\r\n")
-	b.WriteString(ip + " " + domain + "\r\n")
-	b.WriteString(hostsEndMarker + "\r\n")
+	b.WriteString(buildHostsBlock(domains, ip))
 
 	if err := os.WriteFile(p, []byte(b.String()), 0o644); err != nil {
 		return "", fmt.Errorf("写入 hosts 失败：%w", err)
@@ -177,6 +214,20 @@ func flushDNS() error {
 		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// buildHostsBlock 生成 CFSTX 区块的文本（含首尾标记）。
+//
+// hosts 一行一条记录，格式是「IP 域名」；不支持通配符，
+// 想覆盖多个子域名只能一行一个写全。
+func buildHostsBlock(domains []string, ip string) string {
+	var b strings.Builder
+	b.WriteString(hostsBeginMarker + "\r\n")
+	for _, d := range domains {
+		b.WriteString(ip + " " + d + "\r\n")
+	}
+	b.WriteString(hostsEndMarker + "\r\n")
+	return b.String()
 }
 
 // RemoveHosts 删除 hosts 中的 CFSTX 区块，其余内容保持不变。

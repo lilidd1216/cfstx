@@ -23,18 +23,52 @@ watch(targetIP, (v) => localStorage.setItem(STORAGE_IP, v || ''))
 
 // hosts 只能映射 IP、不能指定端口，所以只列 443 端口的结果。
 // 用点击列表而不是下拉框：避免浮层组件在 WebView2 中的兼容问题。
-// 与后端 task.NormalizeProbeDomain 保持一致：用户从地址栏粘来的
-// https://xxx/ 如果原样写进 hosts，是一条完全无效的记录。
-function normalizeDomain() {
-  let v = String(domain.value || '').trim()
-  if (!v) return
+// 一个域名归一化成纯 hostname。与后端 task.NormalizeProbeDomain 一致：
+// 用户从地址栏粘来的 https://xxx/ 如果原样写进 hosts，是一条无效记录。
+function normalizeOneDomain(s) {
+  let v = String(s || '').trim()
+  if (!v) return ''
   const scheme = v.indexOf('://')
   if (scheme >= 0) v = v.slice(scheme + 3)
   const cut = v.search(/[/?#]/)
   if (cut >= 0) v = v.slice(0, cut)
   v = v.replace(/:\d+$/, '').replace(/\.$/, '')
-  domain.value = v.toLowerCase()
+  return v.toLowerCase()
 }
+
+// 支持一次填多个域名：hosts 不支持 *.xxx 通配符，
+// 想覆盖多个子域名只能逐个写全，所以这里允许换行/逗号/分号/空格分隔。
+function splitDomainInput(raw) {
+  return String(raw || '')
+    .split(/[\s,;]+/)
+    .map(normalizeOneDomain)
+    .filter(Boolean)
+}
+
+function normalizeDomain() {
+  const list = splitDomainInput(domain.value)
+  if (!list.length) return
+  domain.value = [...new Set(list)].join('\n')
+}
+
+// 域名侧的问题提前拦住，别等点了按钮才报错
+const domainState = computed(() => {
+  const raw = String(domain.value || '').trim()
+  if (!raw) return { ok: false, msg: '', count: 0 }
+
+  const list = splitDomainInput(raw)
+  if (!list.length) return { ok: false, msg: '', count: 0 }
+
+  const wildcard = list.find((d) => d.includes('*'))
+  if (wildcard) {
+    return {
+      ok: false,
+      msg: `hosts 不支持通配符（${wildcard}）。请把要用到的子域名逐个写全，每行一个`,
+      count: list.length,
+    }
+  }
+  return { ok: true, msg: '', count: list.length }
+})
 
 // hosts 只做域名解析，不涉及端口：浏览器访问 https 固定走 443。
 // 所以粘贴 1.2.3.4:10001 时不能静默去掉端口 —— 那样会写出一条
@@ -130,9 +164,10 @@ const candidates = computed(() =>
 )
 
 const clashRule = computed(() => {
-  const d = domain.value.trim()
-  if (!d) return '# 先在上方「域名」中填写你的域名，这里会自动生成'
-  return `rules:\n  - DOMAIN-SUFFIX,${d},DIRECT`
+  const list = splitDomainInput(domain.value)
+  if (!list.length) return '# 先在上方「域名」中填写你的域名，这里会自动生成'
+  const rules = list.map((d) => `  - DOMAIN-SUFFIX,${d},DIRECT`).join('\n')
+  return `rules:\n${rules}`
 })
 
 async function httpGet(path) {
@@ -177,11 +212,12 @@ async function apply() {
   busy.value = true
   // 用解析出的纯 IP，避免把 #备注 之类的东西带进 hosts
   const { ip } = parseIPInput(targetIP.value)
-  const d = domain.value.trim()
+  const list = splitDomainInput(domain.value)
+  const label = list.length === 1 ? list[0] : `${list.length} 个域名`
   try {
-    await httpPost('/api/hosts/apply', { domain: d, ip })
+    await httpPost('/api/hosts/apply', { domain: list.join('\n'), ip })
     await loadHosts()
-    emit('toast', `已写入 hosts：${ip} → ${d}（DNS 缓存已刷新）`, 'success')
+    emit('toast', `已写入 hosts：${ip} → ${label}（DNS 缓存已刷新）`, 'success')
   } catch (e) {
     emit('toast', String(e.message || e), 'error')
   } finally {
@@ -259,16 +295,20 @@ onMounted(loadHosts)
         </div>
       </v-alert>
 
-      <v-text-field
+      <v-textarea
         v-model="domain"
         label="域名"
-        placeholder="fast3.example.com"
-        hint="只填域名本身，不要带 https:// 或末尾斜杠；粘贴完整网址会自动清理"
+        :placeholder="'fast3.example.com'"
+        hint="多个域名用换行或逗号分隔，都会指向同一个 IP；hosts 不支持 *.xxx 通配符，需要逐个写全"
         persistent-hint
+        rows="2"
+        auto-grow
         density="compact"
         prepend-inner-icon="mdi-web"
-        clearable
+        :error="!!domainState.msg"
+        :error-messages="domainState.msg"
         autocomplete="off"
+        class="domain-input"
         @blur="normalizeDomain"
       />
 
@@ -315,7 +355,7 @@ onMounted(loadHosts)
           color="primary"
           variant="flat"
           :loading="busy"
-          :disabled="!hosts.isAdmin || !domain.trim() || !ipState.ok"
+          :disabled="!hosts.isAdmin || !domainState.ok || !ipState.ok"
           @click="apply"
         >
           应用到 Hosts
@@ -484,6 +524,13 @@ onMounted(loadHosts)
   font-size: 13px;
   color: #71717a;
   padding: 8px 0;
+}
+
+/* 域名输入允许换行 */
+.domain-input :deep(textarea) {
+  font-family: 'Cascadia Mono', 'Consolas', monospace;
+  font-size: 12.5px;
+  line-height: 1.7;
 }
 
 /* IP 输入与候选列表 */
