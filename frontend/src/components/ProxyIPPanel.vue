@@ -9,6 +9,9 @@ const props = defineProps({
       domain: '', results: [], finished: false, stopped: false,
     }),
   },
+  // 主页面的测速是否正在进行。两者同时跑会抢带宽和连接，
+  // 实测可用数会明显偏低，所以要提醒用户。
+  speedTesting: { type: Boolean, default: false },
 })
 const emit = defineEmits(['toast'])
 
@@ -24,7 +27,64 @@ const busy = ref(false)
 watch(text, (v) => localStorage.setItem(STORAGE_TEXT, v || ''))
 watch(probeDomain, (v) => localStorage.setItem(STORAGE_DOMAIN, v || ''))
 
-// 前端先算一遍数量，让用户知道自己粘了多少行（后端会再解析一次）
+// 与后端 task.ParseProxyIPCandidates 保持同样的校验，
+// 否则会显示「已识别 4 个」而后端只解析出 3 个，用户会以为丢数据。
+const HOST_LABEL = /^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$/
+
+// 解析一行，返回归一化后的 host:port；非法返回 null。
+function parseCandidate(line) {
+  let s = line.trim()
+  if (!s) return null
+  const scheme = s.indexOf('://')
+  if (scheme >= 0) s = s.slice(scheme + 3)
+  const cut = s.search(/[/?]/)
+  if (cut >= 0) s = s.slice(0, cut)
+  if (!s) return null
+
+  let host = s
+  let portStr = ''
+  if (s.startsWith('[')) {
+    // [IPv6]:port
+    const end = s.lastIndexOf(']')
+    if (end < 0) return null
+    host = s.slice(1, end)
+    const rest = s.slice(end + 1)
+    if (rest && !rest.startsWith(':')) return null
+    portStr = rest.slice(1)
+  } else if ((s.match(/:/g) || []).length === 1) {
+    // host:port
+    const idx = s.indexOf(':')
+    host = s.slice(0, idx)
+    portStr = s.slice(idx + 1)
+  }
+
+  host = host.trim()
+  if (!host) return null
+
+  let port = 443
+  if (portStr) {
+    const p = Number(portStr)
+    if (!Number.isInteger(p) || p < 1 || p > 65535) return null
+    port = p
+  }
+
+  // IPv4
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(host)) {
+    const ok = host.split('.').every((o) => Number(o) >= 0 && Number(o) <= 255)
+    return ok ? `${host}:${port}` : null
+  }
+  // 裸 IPv6
+  if (host.includes(':')) return `[${host}]:${port}`
+  // 域名：每段都要合法，总长不超过 253
+  if (host.length > 253) return null
+  const labels = host.replace(/\.$/, '').split('.')
+  if (labels.length < 2) return null
+  if (!labels.every((l) => l.length > 0 && l.length <= 63 && HOST_LABEL.test(l))) return null
+  return `${host.toLowerCase()}:${port}`
+}
+
+// 前端先算一遍数量，让用户知道自己粘了多少行（后端会再解析一次）。
+// 去重键和端口补全规则与后端保持一致，否则数字对不上。
 const candidateCount = computed(() => {
   const seen = new Set()
   for (const raw of String(text.value || '').split('\n')) {
@@ -33,11 +93,8 @@ const candidateCount = computed(() => {
     const hash = line.indexOf('#')
     if (hash >= 0) line = line.slice(0, hash).trim()
     if (!line) continue
-    const scheme = line.indexOf('://')
-    if (scheme >= 0) line = line.slice(scheme + 3)
-    const cut = line.search(/[/?]/)
-    if (cut >= 0) line = line.slice(0, cut)
-    if (line) seen.add(line)
+    const key = parseCandidate(line)
+    if (key) seen.add(key)
   }
   return seen.size
 })
@@ -182,6 +239,18 @@ onMounted(loadSources)
         <span class="section-title">候选列表</span>
         <span class="section-desc">一行一个：IP、IP:端口、域名都行</span>
       </div>
+
+      <v-alert
+        v-if="speedTesting"
+        type="warning"
+        variant="tonal"
+        density="compact"
+        class="mb-4"
+        icon="mdi-speedometer"
+      >
+        正在测速。「优选IP」的测速会占满带宽与连接数，此时检测 ProxyIP 的结果会明显偏少。
+        建议等测速结束后再来检测。
+      </v-alert>
 
       <div class="source-row">
         <button

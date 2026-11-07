@@ -612,6 +612,25 @@ function bindEvents() {
   }
 }
 
+// 页面刷新后把上一次的测速结果捞回来。
+// 否则「测完 → 刷新 → 优化工具里一个 IP 都没有」，看起来像功能坏了。
+async function restoreRunState() {
+  try {
+    const st = await httpGet('/api/test/status')
+    const rs = st?.results || []
+    if (st?.running) {
+      running.value = true
+      phase.value = st.phase || 'ping'
+      if (st.progress) progress.value = st.progress
+      results.value = rs
+      startTimer()
+    } else if (rs.length) {
+      results.value = rs
+      phase.value = 'done'
+    }
+  } catch (_) { /* 忽略 */ }
+}
+
 // 页面刷新后把上一次的 ProxyIP 检测结果捞回来，
 // 否则跑了几分钟的 562 条结果一刷新就没了
 async function restoreProxyIPState() {
@@ -637,6 +656,7 @@ onMounted(async () => {
   bindEvents()
   await loadConfig()
   await loadHistory()
+  await restoreRunState()
   await restoreProxyIPState()
   try {
     const v = await httpGet('/api/version')
@@ -850,6 +870,7 @@ onBeforeUnmount(() => {
         <ProxyIPPanel
           v-else-if="currentPage === 'proxyip'"
           :state="proxyIPState"
+          :speed-testing="running"
           @toast="(text, color) => toast(text, color)"
         />
 

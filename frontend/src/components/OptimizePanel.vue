@@ -22,6 +22,19 @@ watch(selectedIP, (v) => localStorage.setItem(STORAGE_IP, v || ''))
 
 // hosts 只能映射 IP、不能指定端口，所以只列 443 端口的结果。
 // 用点击列表而不是下拉框：避免浮层组件在 WebView2 中的兼容问题。
+// 与后端 task.NormalizeProbeDomain 保持一致：用户从地址栏粘来的
+// https://xxx/ 如果原样写进 hosts，是一条完全无效的记录。
+function normalizeDomain() {
+  let v = String(domain.value || '').trim()
+  if (!v) return
+  const scheme = v.indexOf('://')
+  if (scheme >= 0) v = v.slice(scheme + 3)
+  const cut = v.search(/[/?#]/)
+  if (cut >= 0) v = v.slice(0, cut)
+  v = v.replace(/:\d+$/, '').replace(/\.$/, '')
+  domain.value = v.toLowerCase()
+}
+
 const candidates = computed(() =>
   (props.results || [])
     .filter((r) => (r.port || 443) === 443)
@@ -164,11 +177,13 @@ onMounted(loadHosts)
         v-model="domain"
         label="域名"
         placeholder="fast3.example.com"
+        hint="只填域名本身，不要带 https:// 或末尾斜杠；粘贴完整网址会自动清理"
+        persistent-hint
         density="compact"
         prepend-inner-icon="mdi-web"
         clearable
         autocomplete="off"
-        hide-details="auto"
+        @blur="normalizeDomain"
       />
 
       <div class="ip-label">选择要应用的 IP（仅列出 443 端口的结果）</div>

@@ -217,7 +217,13 @@ func isValidHostname(s string) bool {
 	if s == "" || len(s) > 253 {
 		return false
 	}
-	for _, label := range strings.Split(s, ".") {
+	labels := strings.Split(s, ".")
+	// 要求至少两段：单段的 localhost / 内网别名作为反代地址没有意义，
+	// 也会让前端的计数校验和后端对不上。
+	if len(labels) < 2 {
+		return false
+	}
+	for _, label := range labels {
 		if len(label) > 63 || !hostnameLabelPattern.MatchString(label) {
 			return false
 		}

@@ -71,6 +71,9 @@ func TestSplitCandidateRejectsInvalid(t *testing.T) {
 		"[2606:4700::1",
 		"bad_host_name!.com",
 		"-leading-hyphen.com",
+		"not a host", // 含空格
+		"localhost",  // 单段主机名
+		"example",    // 单段主机名
 	}
 	for _, s := range bad {
 		if _, _, ok := splitCandidate(s); ok {

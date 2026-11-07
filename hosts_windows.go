@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"gitee.com/liliaic/cfstx/task"
 	"golang.org/x/sys/windows"
 )
 
@@ -79,23 +80,36 @@ func (a *App) GetHostsStatus() HostsStatus {
 	}
 }
 
-// ApplyHosts 把 domain → ip 写入 hosts 的 CFSTX 区块，覆盖旧条目。
-// 返回本次备份文件的路径。
-func (a *App) ApplyHosts(domain, ip string) (string, error) {
-	domain = strings.ToLower(strings.TrimSpace(domain))
+// validateHostsInput 规范化并校验写入 hosts 的域名与 IP。
+//
+// 用户多半是直接从浏览器地址栏复制过来的（带 https:// 和末尾斜杠），
+// 先归一化成纯 hostname。否则会卡在格式校验上，报「域名格式不正确」，
+// 用户还不知道该怎么改。
+func validateHostsInput(domain, ip string) (string, string, error) {
+	domain = task.NormalizeProbeDomain(domain)
 	ip = strings.TrimSpace(ip)
 
 	if domain == "" {
-		return "", fmt.Errorf("请填写域名")
+		return "", "", fmt.Errorf("请填写域名")
 	}
 	if ip == "" {
-		return "", fmt.Errorf("请选择一个 IP")
+		return "", "", fmt.Errorf("请选择一个 IP")
 	}
 	if strings.ContainsAny(domain, " \t\r\n/:?#") || strings.Contains(domain, "..") {
-		return "", fmt.Errorf("域名格式不正确：%s", domain)
+		return "", "", fmt.Errorf("域名格式不正确：%s", domain)
 	}
 	if net.ParseIP(ip) == nil {
-		return "", fmt.Errorf("IP 格式不正确：%s", ip)
+		return "", "", fmt.Errorf("IP 格式不正确：%s", ip)
+	}
+	return domain, ip, nil
+}
+
+// ApplyHosts 把 domain → ip 写入 hosts 的 CFSTX 区块，覆盖旧条目。
+// 返回本次备份文件的路径。
+func (a *App) ApplyHosts(domain, ip string) (string, error) {
+	domain, ip, err := validateHostsInput(domain, ip)
+	if err != nil {
+		return "", err
 	}
 	if !isElevated() {
 		return "", fmt.Errorf("修改 hosts 需要管理员权限，请关闭后以管理员身份重新启动 CFSTX")

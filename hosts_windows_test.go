@@ -148,3 +148,48 @@ func TestHostsStatusJSONHasNoNull(t *testing.T) {
 		t.Fatalf(`JSON 里 entries 应为数组：%s`, raw)
 	}
 }
+
+// 后端必须能自己清理用户从地址栏粘来的完整网址。
+// 前端失焦时会清理一次，但用户可能直接点按钮，后端不能只依赖前端。
+func TestValidateHostsInput(t *testing.T) {
+	cases := []struct {
+		name       string
+		domain     string
+		ip         string
+		wantDomain string
+		wantErr    string
+	}{
+		{"标准写法", "fast3.example.com", "1.2.3.4", "fast3.example.com", ""},
+		{"带协议和斜杠", "https://fast3.example.com/", "1.2.3.4", "fast3.example.com", ""},
+		{"带路径和查询", "https://Fast3.Example.COM/admin?x=1", "1.2.3.4", "fast3.example.com", ""},
+		{"带端口", "fast3.example.com:8443", "1.2.3.4", "fast3.example.com", ""},
+		{"前后空格", "  fast3.example.com  ", "1.2.3.4", "fast3.example.com", ""},
+		{"空域名", "", "1.2.3.4", "", "请填写域名"},
+		{"只有协议", "https://", "1.2.3.4", "", "请填写域名"},
+		{"空 IP", "fast3.example.com", "", "", "请选择一个 IP"},
+		{"非法 IP", "fast3.example.com", "999.1.1.1", "", "IP 格式不正确"},
+		{"双点域名", "a..b", "1.2.3.4", "", "域名格式不正确"},
+		{"IPv6 地址", "fast3.example.com", "2606:4700::1", "fast3.example.com", ""},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			gotDomain, _, err := validateHostsInput(c.domain, c.ip)
+			if c.wantErr != "" {
+				if err == nil {
+					t.Fatalf("期望报错 %q，实际通过（domain=%q）", c.wantErr, gotDomain)
+				}
+				if !strings.Contains(err.Error(), c.wantErr) {
+					t.Errorf("错误信息 = %q，期望包含 %q", err.Error(), c.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("意外报错: %v", err)
+			}
+			if gotDomain != c.wantDomain {
+				t.Errorf("domain = %q，期望 %q", gotDomain, c.wantDomain)
+			}
+		})
+	}
+}
