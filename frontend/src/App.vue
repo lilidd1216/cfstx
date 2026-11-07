@@ -51,7 +51,9 @@ const proxyIPState = ref({
   running: false,
   done: 0,
   total: 0,
-  okCount: 0,
+  okCount: 0,      // 真中转，能填 PROXYIP
+  directCount: 0,  // 直连 Cloudflare，只能当客户端入口
+  localIp: '',     // 本机公网出口，用于解释「直连」判定
   domain: '',
   results: [],
   finished: false,
@@ -564,6 +566,8 @@ function handleEvent(event, data) {
         done: 0,
         total: data?.total || 0,
         okCount: 0,
+        directCount: 0,
+        localIp: data?.localIp || '',
         domain: data?.domain || '',
         results: [],
         finished: false,
@@ -575,6 +579,9 @@ function handleEvent(event, data) {
     case 'proxyip:progress':
       proxyIPState.value.done = data?.done || 0
       proxyIPState.value.okCount = data?.okCount || 0
+      proxyIPState.value.directCount = data?.directCount || 0
+      // 本机公网 IP 是第一次进度事件才带上的（它要等一次 HTTPS 往返）
+      if (data?.localIp) proxyIPState.value.localIp = data.localIp
       if (data?.result) proxyIPState.value.results.push(data.result)
       break
 
@@ -584,6 +591,8 @@ function handleEvent(event, data) {
         done: data?.done || 0,
         total: data?.total || 0,
         okCount: data?.okCount || 0,
+        directCount: data?.directCount || 0,
+        localIp: data?.localIp || proxyIPState.value.localIp,
         domain: data?.domain || proxyIPState.value.domain,
         results: data?.results || proxyIPState.value.results,
         finished: true,
@@ -591,9 +600,9 @@ function handleEvent(event, data) {
         seconds: data?.seconds || 0,
       }
       if (data?.stopped) {
-        toast(`检测已停止，${proxyIPState.value.okCount} 个可用`, 'info')
+        toast(`检测已停止，${proxyIPState.value.okCount} 个真中转可用`, 'info')
       } else {
-        toast(`检测完成，${proxyIPState.value.okCount} 个 ProxyIP 可用`, 'success')
+        toast(`检测完成，${proxyIPState.value.okCount} 个真中转可用`, 'success')
       }
       break
   }
@@ -642,7 +651,9 @@ async function restoreProxyIPState() {
       running: !!st.running,
       done: st.done || 0,
       total: st.total || 0,
-      okCount: rs.filter((r) => r.ok).length,
+      okCount: rs.filter((r) => r.ok && !r.direct).length,
+      directCount: rs.filter((r) => r.ok && r.direct).length,
+      localIp: st.localIp || '',
       domain: st.domain || '',
       results: rs,
       finished: !st.running,

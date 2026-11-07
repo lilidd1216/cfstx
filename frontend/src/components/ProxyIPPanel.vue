@@ -121,7 +121,15 @@ function mergeCandidates(newText) {
 }
 
 const results = computed(() => props.state.results || [])
-const okResults = computed(() => results.value.filter((r) => r.ok))
+
+// 真中转：能当 PROXYIP 用
+const okResults = computed(() => results.value.filter((r) => r.ok && !r.direct))
+
+// 直连 Cloudflare：证书和 trace 都正常，但出口就是本机 —— 中间没有中转。
+// 这类地址只能当客户端入口（优选 IP），填进 PROXYIP 会让 Worker 绕一圈
+// 又回到同一个边缘节点，白多一跳。
+const directResults = computed(() => results.value.filter((r) => r.ok && r.direct))
+
 // 本机无法验证的（典型：域名解析到 Cloudflare 自有网段，
 // 但从 Cloudflare 内部访问是通的），单独统计
 const uncertainResults = computed(() => results.value.filter((r) => !r.ok && r.uncertain))
@@ -143,7 +151,8 @@ const filteredResults = computed(() => {
   if (v6Only.value) return rs.filter((r) => r.ok && r.exitIpv6)
   return rs
 })
-const filteredOK = computed(() => filteredResults.value.filter((r) => r.ok))
+// 复制 / 计数的范围：只算真中转，直连 Cloudflare 的不参与
+const filteredOK = computed(() => filteredResults.value.filter((r) => r.ok && !r.direct))
 
 // 复制前 N 名，N 用预设按钮切换
 const TOP_OPTIONS = [3, 5, 10, 20]
@@ -161,10 +170,11 @@ const percent = computed(() => {
 
 const summary = computed(() => {
   if (!props.state.finished) return ''
-  const { okCount, total, seconds, stopped } = props.state
+  const { okCount, total, seconds, stopped, directCount } = props.state
   const head = stopped ? '已停止' : '检测完成'
   const cost = seconds ? `，用时 ${seconds.toFixed(0)} 秒` : ''
-  return `${head}：${total} 个候选中 ${okCount} 个可用${cost}`
+  const direct = directCount ? `，另有 ${directCount} 个直连 Cloudflare` : ''
+  return `${head}：${total} 个候选中 ${okCount} 个真中转可用${direct}${cost}`
 })
 
 async function httpGet(path) {
@@ -280,9 +290,21 @@ function clearAll() {
   text.value = ''
 }
 
+// 出口这一列要能直接看出「是不是你自己」，所以把 IP 放在最前面。
 function exitLabel(r) {
   if (!r.exitIp) return '—'
-  return `${r.exitLoc || '??'}·${r.exitColo || '??'}·${r.exitIpv6 ? 'v6' : 'v4'}`
+  const place = r.exitColo || '??'
+  return `${r.exitIp} · ${place}${r.exitIpv6 ? ' · v6' : ''}`
+}
+
+function badgeText(r) {
+  if (!r.ok) return r.uncertain ? '待验证' : '无效'
+  return r.direct ? '直连CF' : '可用'
+}
+
+function badgeClass(r) {
+  if (!r.ok) return r.uncertain ? 'unknown' : 'fail'
+  return r.direct ? 'direct' : 'ok'
 }
 
 onMounted(loadSources)
@@ -391,7 +413,10 @@ onMounted(loadSources)
       <div v-if="props.state.running || props.state.finished" class="progress-box">
         <div class="progress-line">
           <span>{{ props.state.done }} / {{ props.state.total }}</span>
-          <span class="ok-count">可用 {{ props.state.okCount }}</span>
+          <span class="ok-count">真中转 {{ props.state.okCount }}</span>
+          <span v-if="props.state.directCount" class="direct-count">
+            直连CF {{ props.state.directCount }}
+          </span>
           <v-spacer />
           <span>{{ percent }}%</span>
         </div>
@@ -402,6 +427,14 @@ onMounted(loadSources)
           rounded
         />
         <div v-if="summary" class="summary">{{ summary }}</div>
+        <div v-if="props.state.localIp" class="local-ip">
+          本机公网出口 <code>{{ props.state.localIp }}</code>
+          <span class="local-ip-hint">出口等于这个地址的，说明是直连 Cloudflare，不是真中转</span>
+        </div>
+        <div v-else-if="props.state.finished" class="local-ip warn">
+          没取到本机公网 IP，这次无法区分「直连 Cloudflare」和「真中转」。
+          如果正开着代理，请关掉再测。
+        </div>
       </div>
 
       <div class="hint note">
@@ -411,7 +444,11 @@ onMounted(loadSources)
         <br />
         <strong>怎么判断</strong>：连接后用探测域名做 TLS 握手，只有返回
         <em>该域名的 Cloudflare 证书</em>、并且能取回 <code>/cdn-cgi/trace</code>
-        的才算可用。Cloudflare 自有网段的 IP 会被自动排除（证书会通过，但配进节点不工作）。
+        的才算通过。Cloudflare 自有网段的 IP 会被自动排除（证书会通过，但配进节点不工作）。
+        <br />
+        <strong>怎么区分真中转</strong>：对比 <code>trace</code> 里的出口 IP 和本机公网 IP。
+        出口等于你自己的，说明对方根本没有转发，只是直连到了 Cloudflare 边缘 ——
+        这类会标成「直连CF」，不计入可用、也不会被复制。
       </div>
     </v-card>
 
@@ -420,7 +457,11 @@ onMounted(loadSources)
       <div class="section-head">
         <v-icon size="18" color="primary">mdi-format-list-checks</v-icon>
         <span class="section-title">检测结果</span>
-        <span class="section-desc">{{ okResults.length }} 个可用 / 共 {{ results.length }} 个</span>
+        <span class="section-desc">
+          {{ okResults.length }} 个真中转可用
+          <template v-if="directResults.length"> · {{ directResults.length }} 个直连 CF</template>
+          / 共 {{ results.length }} 个
+        </span>
       </div>
 
       <!-- v4 / v6 互斥筛选（按出口类型） -->
@@ -481,6 +522,7 @@ onMounted(loadSources)
       <div class="copy-tip">
         <strong>复制为 PROXYIP</strong>：生成 <code>地址:端口,地址:端口,...</code> 一行，直接粘进
         edgetunnel 的 <code>PROXYIP</code> 设置（它支持多个，每次随机选一个用）。
+        只包含「可用」的真中转，直连 Cloudflare 的不会带上。
         <br />
         <strong>复制地址列表</strong>：一行一个，粘到网页版检测工具或别处用。
       </div>
@@ -490,11 +532,13 @@ onMounted(loadSources)
           v-for="r in filteredResults"
           :key="r.addr"
           class="result-row"
-          :class="{ bad: !r.ok && !r.uncertain, unknown: r.uncertain }"
+          :class="{
+            bad: !r.ok && !r.uncertain,
+            unknown: r.uncertain,
+            direct: r.ok && r.direct,
+          }"
         >
-          <span class="badge" :class="r.ok ? 'ok' : (r.uncertain ? 'unknown' : 'fail')">
-            {{ r.ok ? '可用' : (r.uncertain ? '待验证' : '无效') }}
-          </span>
+          <span class="badge" :class="badgeClass(r)">{{ badgeText(r) }}</span>
           <span class="addr mono">{{ r.addr }}</span>
           <span class="exit">{{ exitLabel(r) }}</span>
           <span class="timing">
@@ -509,6 +553,14 @@ onMounted(loadSources)
         class="empty-filter"
       >
         当前筛选下没有结果 —— 换另一边，或者取消筛选
+      </div>
+
+      <div v-if="directResults.length" class="hint note mt-3 direct-note">
+        <strong>「直连CF」是什么意思</strong>：这些地址确实连到了 Cloudflare（证书和 trace
+        都正常），但 <code>/cdn-cgi/trace</code> 返回的出口 IP <b>就是本机自己</b> ——
+        说明中间<b>没有任何中转</b>。它们属于客户端入口（优选 IP），
+        <b>不能填进 edgetunnel 的 PROXYIP</b>：Worker 会把它当中转站，绕一圈又回到同一个
+        Cloudflare，白白多一跳。复制按钮不会带上它们。
       </div>
 
       <div v-if="uncertainResults.length" class="hint note mt-3 uncertain-note">
@@ -659,10 +711,39 @@ onMounted(loadSources)
   color: #5fbf7f;
 }
 
+.direct-count {
+  color: #e8a33d;
+}
+
 .summary {
   margin-top: 8px;
   font-size: 12.5px;
   color: #a1a1aa;
+}
+
+/* 本机公网出口 */
+.local-ip {
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: #71717a;
+}
+
+.local-ip code {
+  font-family: 'Cascadia Mono', 'Consolas', monospace;
+  font-size: 11.5px;
+  color: #a5b4fc;
+  background: rgba(79, 106, 205, 0.12);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.local-ip-hint {
+  margin-left: 6px;
+  color: #5f5f68;
+}
+
+.local-ip.warn {
+  color: #e8a33d;
 }
 
 .hint {
@@ -812,6 +893,11 @@ onMounted(loadSources)
   background: rgba(232, 163, 61, 0.06);
 }
 
+.result-row.direct {
+  border-color: #3a3a24;
+  background: rgba(232, 200, 61, 0.04);
+}
+
 .badge {
   flex: 0 0 auto;
   font-size: 11px;
@@ -835,8 +921,17 @@ onMounted(loadSources)
   background: rgba(232, 163, 61, 0.16);
 }
 
+.badge.direct {
+  color: #d4b13f;
+  background: rgba(212, 177, 63, 0.16);
+}
+
 .uncertain-note {
   border-left-color: #e8a33d !important;
+}
+
+.direct-note {
+  border-left-color: #d4b13f !important;
 }
 
 .addr {
@@ -848,8 +943,11 @@ onMounted(loadSources)
 }
 
 .exit {
-  flex: 0 0 110px;
+  flex: 0 0 170px;
   color: #7c9cff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .timing {

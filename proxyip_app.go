@@ -21,10 +21,13 @@ type ProxyIPCheckRequest struct {
 
 // ProxyIPStatus 是检测状态快照。
 type ProxyIPStatus struct {
-	Running bool                 `json:"running"`
-	Done    int                  `json:"done"`
-	Total   int                  `json:"total"`
-	Domain  string               `json:"domain"`
+	Running bool   `json:"running"`
+	Done    int    `json:"done"`
+	Total   int    `json:"total"`
+	Domain  string `json:"domain"`
+	// LocalIP 是本机公网出口 IP，前端用它解释「直连」判定。
+	// 空字符串表示没取到，此时无法区分直连与真中转。
+	LocalIP string               `json:"localIp"`
 	Results []task.ProxyIPResult `json:"results"`
 }
 
@@ -53,6 +56,7 @@ func (a *App) StartProxyIPCheck(req ProxyIPCheckRequest) error {
 	a.proxyDone = 0
 	a.proxyTotal = len(cands)
 	a.proxyDomain = domain
+	a.proxyLocalIP = ""
 	a.proxyResults = nil
 	a.proxyMu.Unlock()
 
@@ -80,6 +84,7 @@ func (a *App) GetProxyIPStatus() ProxyIPStatus {
 		Done:    a.proxyDone,
 		Total:   a.proxyTotal,
 		Domain:  a.proxyDomain,
+		LocalIP: a.proxyLocalIP,
 		Results: results,
 	}
 }
@@ -93,29 +98,57 @@ func (a *App) runProxyIPCheck(cands []task.ProxyIPCandidate, concurrency int, do
 		a.proxyMu.Unlock()
 	}()
 
-	a.appendLog("info", "proxyip", fmt.Sprintf(
-		"开始 ProxyIP 检测 | 候选=%d 探测域名=%s", len(cands), domain))
+	// 先把开始事件发出去：前端立刻能看到进度条。
+	// 本机公网 IP 要等一次 HTTPS 往返，放在后面拿，别让按钮点完没反应。
 	a.emit("proxyip:started", map[string]any{
-		"total":  len(cands),
-		"domain": domain,
+		"total":   len(cands),
+		"domain":  domain,
+		"localIp": "",
 	})
 
+	// 取本机公网出口：判定「直连 Cloudflare」依赖它。
+	// 取不到就降级为无法判定，不影响检测本身，只是少一个区分维度。
+	localIP := task.FetchLocalPublicIP(3 * time.Second)
+	a.proxyMu.Lock()
+	a.proxyLocalIP = localIP
+	a.proxyMu.Unlock()
+
+	localIPNote := localIP
+	if localIPNote == "" {
+		localIPNote = "取不到"
+	}
+	a.appendLog("info", "proxyip", fmt.Sprintf(
+		"开始 ProxyIP 检测 | 候选=%d 探测域名=%s 本机出口=%s",
+		len(cands), domain, localIPNote))
+	if localIP == "" {
+		a.appendLog("warn", "proxyip",
+			"取不到本机公网 IP，无法区分「直连 Cloudflare」和「真中转」——如果正开着代理，判定会失效，建议关掉再测")
+	}
+
 	done := 0
-	okCount := 0
-	results := task.ProbeProxyIPs(cands, domain, concurrency, func(r task.ProxyIPResult) {
+	okCount := 0     // 真中转，可以填 PROXYIP
+	directCount := 0 // 直连 Cloudflare，只能当客户端入口用
+
+	results := task.ProbeProxyIPs(cands, domain, concurrency, localIP, func(r task.ProxyIPResult) {
 		done++
 		if r.OK {
-			okCount++
+			if r.Direct {
+				directCount++
+			} else {
+				okCount++
+			}
 		}
 		a.proxyMu.Lock()
 		a.proxyDone = done
 		a.proxyMu.Unlock()
 
 		a.emit("proxyip:progress", map[string]any{
-			"done":    done,
-			"total":   len(cands),
-			"okCount": okCount,
-			"result":  r,
+			"done":        done,
+			"total":       len(cands),
+			"okCount":     okCount,
+			"directCount": directCount,
+			"localIp":     localIP,
+			"result":      r,
 		})
 	})
 
@@ -125,17 +158,23 @@ func (a *App) runProxyIPCheck(cands []task.ProxyIPCandidate, concurrency int, do
 	a.proxyMu.Unlock()
 
 	stopped := done < len(cands)
+	stoppedNote := ""
+	if stopped {
+		stoppedNote = "（已手动停止）"
+	}
 	a.appendLog("info", "proxyip", fmt.Sprintf(
-		"ProxyIP 检测完成 | %d 个候选，%d 个可用%s",
-		len(cands), okCount, map[bool]string{true: "（已手动停止）", false: ""}[stopped]))
+		"ProxyIP 检测完成 | %d 个候选，%d 个真中转，%d 个直连 Cloudflare（不能填 PROXYIP）%s",
+		len(cands), okCount, directCount, stoppedNote))
 
 	a.emit("proxyip:finished", map[string]any{
-		"results": results,
-		"okCount": okCount,
-		"done":    done,
-		"total":   len(cands),
-		"seconds": time.Since(start).Seconds(),
-		"stopped": stopped,
+		"results":     results,
+		"okCount":     okCount,
+		"directCount": directCount,
+		"localIp":     localIP,
+		"done":        done,
+		"total":       len(cands),
+		"seconds":     time.Since(start).Seconds(),
+		"stopped":     stopped,
 	})
 }
 

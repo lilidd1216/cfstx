@@ -129,14 +129,17 @@ func TestFormatProxyIPList(t *testing.T) {
 		{Addr: "1.2.3.4:443", OK: true},
 		{Addr: "5.6.7.8:8443", OK: false},
 		{Addr: "9.9.9.9:2053", OK: true},
+		// 直连 Cloudflare 的：检测通过，但不是真中转，不能填 PROXYIP
+		{Addr: "8.8.8.8:443", OK: true, Direct: true},
 	}
 
 	all := FormatProxyIPList(results, false)
-	wantAll := "PROXYIP=1.2.3.4:443\nPROXYIP=5.6.7.8:8443\nPROXYIP=9.9.9.9:2053\n"
+	wantAll := "PROXYIP=1.2.3.4:443\nPROXYIP=5.6.7.8:8443\nPROXYIP=9.9.9.9:2053\nPROXYIP=8.8.8.8:443\n"
 	if all != wantAll {
 		t.Errorf("全部输出不对：\n got=%q\nwant=%q", all, wantAll)
 	}
 
+	// onlyOK 要同时排掉「不可用」和「直连 Cloudflare」两类
 	onlyOK := FormatProxyIPList(results, true)
 	wantOK := "PROXYIP=1.2.3.4:443\nPROXYIP=9.9.9.9:2053\n"
 	if onlyOK != wantOK {
@@ -149,17 +152,71 @@ func TestSortProxyIPResults(t *testing.T) {
 		{Addr: "slow.example:443", OK: true, TLSDelay: 800, HTTPDelay: 400},
 		{Addr: "dead.example:443", OK: false},
 		{Addr: "fast.example:443", OK: true, TLSDelay: 200, HTTPDelay: 100},
+		// 直连 Cloudflare：哪怕更快，也要排在真中转后面
+		{Addr: "direct.example:443", OK: true, Direct: true, TLSDelay: 10, HTTPDelay: 10},
+		{Addr: "pending.example:443", Uncertain: true},
 	}
 	sortProxyIPResults(rs)
 
-	if !rs[0].OK || rs[0].Addr != "fast.example:443" {
-		t.Errorf("第一名应是最快的可用项，实际 %+v", rs[0])
+	wantOrder := []string{
+		"fast.example:443",     // 真中转，最快
+		"slow.example:443",     // 真中转，较慢
+		"direct.example:443",   // 直连，即使 20ms 也排在真中转之后
+		"pending.example:443",  // 本机无法验证
+		"dead.example:443",     // 不可用
 	}
-	if !rs[1].OK || rs[1].Addr != "slow.example:443" {
-		t.Errorf("第二名应是较慢的可用项，实际 %+v", rs[1])
+	for i, want := range wantOrder {
+		if rs[i].Addr != want {
+			t.Errorf("第 %d 位应为 %s，实际 %s", i+1, want, rs[i].Addr)
+		}
 	}
-	if rs[2].OK {
-		t.Errorf("不可用的应排最后，实际 %+v", rs[2])
+}
+
+func TestSameIP(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"1.2.3.4", "1.2.3.4", true},
+		{"1.2.3.4", "1.2.3.5", false},
+		{"  1.2.3.4  ", "1.2.3.4", true}, // trace 偶有空白
+		{"2606:4700::99", "2606:4700::99", true},
+		{"2606:4700::99", "2606:4700::100", false},
+		// IPv4-mapped IPv6 与 IPv4 是同一个地址
+		{"::ffff:1.2.3.4", "1.2.3.4", true},
+		// v4 和 v6 不能相等
+		{"1.2.3.4", "2606:4700::99", false},
+		// 空值和非法值一律判否，避免把「取不到」误当成匹配
+		{"", "1.2.3.4", false},
+		{"1.2.3.4", "", false},
+		{"", "", false},
+		{"not-an-ip", "not-an-ip", false},
+	}
+	for _, c := range cases {
+		if got := sameIP(c.a, c.b); got != c.want {
+			t.Errorf("sameIP(%q, %q) = %v，应为 %v", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+func TestParseTraceIPField(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"正常", "fl=1\nip=1.2.3.4\nts=1\n", "1.2.3.4"},
+		{"带空白", "  ip=  5.6.7.8  \n", "5.6.7.8"},
+		{"IPv6", "ip=2606:4700::99\n", "2606:4700::99"},
+		{"没有 ip 字段", "colo=SJC\nloc=US\n", ""},
+		{"空响应", "", ""},
+		// 前缀相同但字段名不同的不能被误认
+		{"相似字段", "ipv6=1.2.3.4\nipfoo=x\n", ""},
+	}
+	for _, c := range cases {
+		if got := parseTraceIPField([]byte(c.body)); got != c.want {
+			t.Errorf("%s: parseTraceIPField = %q，应为 %q", c.name, got, c.want)
+		}
 	}
 }
 

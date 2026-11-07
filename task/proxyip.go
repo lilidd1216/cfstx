@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"regexp"
 	"sort"
 	"strconv"
@@ -110,6 +111,16 @@ type ProxyIPResult struct {
 	// 但 Cloudflare 内部的 DNS 结果可能不同（实测 proxyip.cmliussss.net
 	// 在 Worker 里能正常使用，出口还在变），所以不能直接判死。
 	Uncertain bool `json:"uncertain"`
+
+	// Direct 表示「直连到了 Cloudflare 边缘」，即对方并没有做转发。
+	//
+	// 判据：/cdn-cgi/trace 返回的 ip= 与本机公网出口 IP 相同。
+	// 这说明 Cloudflare 看到的连接来源就是用户自己，中间没有任何中转。
+	//
+	// 这类地址技术上能通过全部检测（证书、trace 都正常），但它只能当
+	// 客户端入口（优选 IP）用，填进 PROXYIP 是错的：Worker 会把它当
+	// 中转站绕一圈再回到同一个 Cloudflare，白白多一跳。
+	Direct bool `json:"direct"`
 }
 
 // TotalDelay 是判定优劣用的总耗时（越小越好）。
@@ -305,17 +316,115 @@ func IsCloudflareOwnedIP(ip net.IP) bool {
 }
 
 // ---------------------------------------------------------------------------
+// 本机公网出口
+
+// localPublicIPTraceURLs 用来取本机公网 IP。
+//
+// 这些请求强制直连（不走系统代理）：判定「出口是不是用户自己」必须基于
+// 真实公网出口。如果走代理，拿到的是代理的 IP，会把所有结果都误判成
+// 真中转（每个 ProxyIP 的出口都不等于代理 IP）。
+var localPublicIPTraceURLs = []string{
+	"https://speed.cloudflare.com/cdn-cgi/trace",
+	"https://www.cloudflare.com/cdn-cgi/trace",
+}
+
+// FetchLocalPublicIP 取本机当前的公网出口 IP，失败返回空字符串。
+//
+// 多个地址并行请求，谁先返回有效结果就用谁，最坏等 timeout。
+// 取不到时调用方应降级为「无法判定」，不要当成检测失败。
+func FetchLocalPublicIP(timeout time.Duration) string {
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+
+	client := &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			Proxy:       nil, // 强制直连，见上
+			DialContext: (&net.Dialer{Timeout: timeout}).DialContext,
+		},
+	}
+	// 一次性客户端，用完把空闲连接关掉
+	defer client.CloseIdleConnections()
+
+	type hit struct{ ip string }
+	ch := make(chan hit, len(localPublicIPTraceURLs))
+	for _, u := range localPublicIPTraceURLs {
+		go func(u string) {
+			ch <- hit{ip: fetchTraceIP(client, u)}
+		}(u)
+	}
+
+	deadline := time.After(timeout)
+	for range localPublicIPTraceURLs {
+		select {
+		case h := <-ch:
+			if h.ip != "" {
+				return h.ip
+			}
+		case <-deadline:
+			return ""
+		}
+	}
+	return ""
+}
+
+// fetchTraceIP 请求一个 trace 地址并取出 ip= 字段。
+func fetchTraceIP(client *http.Client, u string) string {
+	resp, err := client.Get(u)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2048))
+	if err != nil {
+		return ""
+	}
+	return parseTraceIPField(body)
+}
+
+// parseTraceIPField 从 trace 文本里取 ip=。
+func parseTraceIPField(body []byte) string {
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "ip=") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "ip="))
+		}
+	}
+	return ""
+}
+
+// sameIP 判断两个字符串是否是同一个地址（兼容 IPv4 与 IPv4-mapped IPv6）。
+//
+// 两边都先去掉空白：net.ParseIP 不接受带空格的输入，而 trace 响应里
+// 偶尔会出现 `ip= 1.2.3.4` 这种带空格的行。
+func sameIP(a, b string) bool {
+	ia := net.ParseIP(strings.TrimSpace(a))
+	ib := net.ParseIP(strings.TrimSpace(b))
+	if ia == nil || ib == nil {
+		return false
+	}
+	return ia.Equal(ib)
+}
+
+// ---------------------------------------------------------------------------
 // 探测
 
 // ProbeProxyIPs 并发探测候选列表。
 //
 // probeDomain 是 TLS 的 SNI，默认 DefaultProxyProbeDomain；用户也可以
 // 填自己的 Worker 域名，这样探测出来的结果更贴近真实使用场景。
+// localIP 是本机公网出口 IP（见 FetchLocalPublicIP），用来判定对方是否
+// 真的做了转发；传空字符串表示无法判定，此时所有结果都不会被标成 Direct。
 // onResult 每完成一条回调一次，供界面实时追加。
 func ProbeProxyIPs(
 	cands []ProxyIPCandidate,
 	probeDomain string,
 	concurrency int,
+	localIP string,
 	onResult func(ProxyIPResult),
 ) []ProxyIPResult {
 	probeDomain = NormalizeProbeDomain(probeDomain)
@@ -347,7 +456,7 @@ func ProbeProxyIPs(
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			r := probeOneProxyIP(c, probeDomain)
+			r := probeOneProxyIP(c, probeDomain, localIP)
 
 			mu.Lock()
 			results = append(results, r)
@@ -364,17 +473,23 @@ func ProbeProxyIPs(
 	return results
 }
 
-// sortProxyIPResults 排序：可用 → 本机无法验证 → 不可用，
-// 同组内可用的按总耗时升序。
+// sortProxyIPResults 排序：
+//
+//	真 ProxyIP → 直连 Cloudflare（不能当 ProxyIP 用）→ 本机无法验证 → 不可用
+//
+// 同组内按总耗时升序。直连项虽然检测通过，但排到真中转后面，
+// 避免用户复制前 N 名时把它带上。
 func sortProxyIPResults(rs []ProxyIPResult) {
 	rank := func(r ProxyIPResult) int {
 		switch {
-		case r.OK:
+		case r.OK && !r.Direct:
 			return 0
-		case r.Uncertain:
+		case r.OK && r.Direct:
 			return 1
-		default:
+		case r.Uncertain:
 			return 2
+		default:
+			return 3
 		}
 	}
 	sort.SliceStable(rs, func(i, j int) bool {
@@ -392,7 +507,7 @@ func sortProxyIPResults(rs []ProxyIPResult) {
 }
 
 // probeOneProxyIP 探测单个候选。
-func probeOneProxyIP(c ProxyIPCandidate, probeDomain string) ProxyIPResult {
+func probeOneProxyIP(c ProxyIPCandidate, probeDomain, localIP string) ProxyIPResult {
 	port := c.Port
 	if port == 0 {
 		port = proxyIPDefaultPort
@@ -447,7 +562,7 @@ func probeOneProxyIP(c ProxyIPCandidate, probeDomain string) ProxyIPResult {
 			defer wg.Done()
 			defer func() { <-sem }()
 			addr := net.JoinHostPort(ip.String(), strconv.Itoa(port))
-			r, ok := probeCandidateAddr(ctx, addr, probeDomain)
+			r, ok := probeCandidateAddr(ctx, addr, probeDomain, localIP)
 			ch <- outcome{r, ok}
 		}(ip)
 	}
@@ -538,7 +653,7 @@ func lookupIPsWithTimeout(host string, timeout time.Duration) ([]net.IP, bool) {
 // probeCandidateAddr 对已经确定好 IP 的地址做完整探测。
 // ctx 取消时主动关闭连接，避免同一候选的其它 IP 已经成功、
 // 这里还在慢慢等超时。
-func probeCandidateAddr(ctx context.Context, addr, probeDomain string) (ProxyIPResult, bool) {
+func probeCandidateAddr(ctx context.Context, addr, probeDomain, localIP string) (ProxyIPResult, bool) {
 	var res ProxyIPResult
 
 	dialer := &net.Dialer{Timeout: proxyIPDialTimeout}
@@ -625,6 +740,17 @@ func probeCandidateAddr(ctx context.Context, addr, probeDomain string) (ProxyIPR
 	res.HTTPDelay = time.Since(httpStart).Milliseconds()
 	res.OK = true
 	parseProxyIPTrace(body, &res)
+
+	// 5. 判断对方是真转发还是直连到了 Cloudflare 边缘。
+	//
+	// trace 的 ip= 是 Cloudflare 看到的连接来源：
+	//   - 真 ProxyIP：转发服务器自己的 IP（和本机不同）
+	//   - 直连入口：本机公网 IP（说明根本没有中转）
+	//
+	// 只有拿到本机公网 IP 才能判定；取不到时保持 false，界面显示「无法判定」。
+	if res.OK && localIP != "" && sameIP(res.ExitIP, localIP) {
+		res.Direct = true
+	}
 	return res, res.OK
 }
 
@@ -642,7 +768,7 @@ func parseProxyIPTrace(body []byte, res *ProxyIPResult) {
 		line = strings.TrimSpace(line)
 		switch {
 		case strings.HasPrefix(line, "ip="):
-			res.ExitIP = strings.TrimPrefix(line, "ip=")
+			res.ExitIP = strings.TrimSpace(strings.TrimPrefix(line, "ip="))
 			res.ExitIPv6 = strings.Contains(res.ExitIP, ":")
 		case strings.HasPrefix(line, "colo="):
 			res.ExitColo = strings.TrimPrefix(line, "colo=")
@@ -662,10 +788,12 @@ func parseProxyIPTrace(body []byte, res *ProxyIPResult) {
 //	PROXYIP=5.6.7.8:8443
 //
 // 端口必须带上：常用端口除了 443 还有 8443/2053/2096 等。
+// onlyOK 为 true 时会同时排除「直连 Cloudflare」的项 —— 那些是客户端
+// 入口，填进 PROXYIP 只会让 Worker 绕一圈回到同一个边缘节点。
 func FormatProxyIPList(results []ProxyIPResult, onlyOK bool) string {
 	var b strings.Builder
 	for _, r := range results {
-		if onlyOK && !r.OK {
+		if onlyOK && (!r.OK || r.Direct) {
 			continue
 		}
 		fmt.Fprintf(&b, "PROXYIP=%s\n", r.Addr)

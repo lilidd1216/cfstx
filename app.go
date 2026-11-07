@@ -174,6 +174,7 @@ type App struct {
 	proxyDone    int
 	proxyTotal   int
 	proxyDomain  string
+	proxyLocalIP string // 本机公网出口，用于判定直连；空表示取不到
 	proxyResults []task.ProxyIPResult
 }
 
