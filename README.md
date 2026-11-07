@@ -663,6 +663,16 @@ ISCC.exe installer.iss
 
 Worker 会把它当中转站：`Worker → 该地址 → 又回到同一个 Cloudflare`，白白多一跳，不解决任何问题。这类地址属于**客户端入口（优选 IP）**，和 ProxyIP 是两个位置的东西。
 
+**顺带修掉一个并发问题**
+
+`ProbeProxyIPs` 的结果回调会被多条探测 goroutine 并发调用，`runProxyIPCheck` 里的 `done` / `okCount` / `directCount` 没有加锁 —— `go test -race` 能稳定复现。现在计数和快照都在 `proxyMu` 内完成，全量 race 测试通过。
+
+这个 bug 从 v1.2.0 就存在，只是计数偶发偏差不会直接表现为功能故障，一直没被发现。
+
+**取本机 IP 时优先 IPv4**
+
+ProxyIP 检测本身走 IPv4。某些网络 IPv6 优先，取到的本机出口是 v6 地址，和 v4 出口永远不相等，会把所有直连项漏判成「真中转」。现在先拨 tcp4，失败再退回默认。
+
 ### v1.2.10
 
 **复查 v1.2.9 的三个新功能，加固了两处**
