@@ -210,11 +210,12 @@ release.ps1    REM 完整发布产物（安装包 + 免安装 zip）
 | **GitHub 仓库**（镜像） | [github.com/lilidd1216/cfstx](https://github.com/lilidd1216/cfstx) |
 | **Gitee Releases** | [gitee.com/liliaic/cfstx/releases](https://gitee.com/liliaic/cfstx/releases) |
 | **GitHub Releases** | [github.com/lilidd1216/cfstx/releases](https://github.com/lilidd1216/cfstx/releases) |
-| **Wiki** | [gitee.com/liliaic/cfstx/wiki](https://gitee.com/liliaic/cfstx/wiki) |
+| **Gitee Wiki** | [gitee.com/liliaic/cfstx/wiki](https://gitee.com/liliaic/cfstx/wiki) |
+| **GitHub Wiki** | [github.com/lilidd1216/cfstx/wiki](https://github.com/lilidd1216/cfstx/wiki) |
 | **更新日志** | [CHANGELOG.md](CHANGELOG.md) |
 | **上游项目** | [XIU2/CloudflareSpeedTest](https://github.com/XIU2/CloudflareSpeedTest) |
 
-> GitHub 用户如果打不开 Gitee Wiki，可以直接看仓库里的 [`docs/wiki/`](docs/wiki) 目录，内容完全一样。
+> 两个平台的 Wiki 内容一致。如果都打不开，也可以直接看仓库里的 [`docs/wiki/`](docs/wiki) 目录。
 
 ---
 
