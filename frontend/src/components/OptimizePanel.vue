@@ -446,6 +446,345 @@ onMounted(loadHosts)
         </div>
       </div>
     </v-card>
+
+    <!-- 进阶：多账号与节点池 -->
+    <v-card class="section" elevation="0">
+      <div class="section-head">
+        <v-icon size="18" color="primary">mdi-server-network</v-icon>
+        <span class="section-title">进阶：多账号与节点池</span>
+        <span class="section-desc">单个账号 10 万请求/天不够用时</span>
+      </div>
+
+      <v-alert type="info" variant="tonal" density="compact" class="mb-4" icon="mdi-gauge">
+        <strong>先确认你缺不缺</strong>：Cloudflare 后台 → Workers 和 Pages → 看「请求」曲线。
+        日请求不到 5 万就别折腾，多账号的维护成本远高于收益。
+      </v-alert>
+
+      <v-expansion-panels variant="accordion" class="adv-panels">
+
+        <!-- ① 方案对比 -->
+        <v-expansion-panel>
+          <v-expansion-panel-title>
+            <span class="panel-title">① 三条路：先选方向</span>
+          </v-expansion-panel-title>
+          <v-expansion-panel-text>
+            <table class="cmp-table">
+              <thead>
+                <tr><th>方案</th><th>额度</th><th>成本</th><th>复杂度</th><th>风险</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>付费 Workers</strong></td>
+                  <td>1000 万/天</td>
+                  <td>$5/月</td>
+                  <td>后台点一下</td>
+                  <td>无</td>
+                </tr>
+                <tr>
+                  <td><strong>多账号多节点</strong></td>
+                  <td>10 万 × N</td>
+                  <td>免费</td>
+                  <td>每个账号部署一次</td>
+                  <td>账号关联、ToS</td>
+                </tr>
+                <tr>
+                  <td><strong>Snippets 绕过</strong></td>
+                  <td>不按 Worker 计费</td>
+                  <td>免费</td>
+                  <td>中</td>
+                  <td>功能受限，不能用 connect()</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="hint mt-3">
+              <strong>怎么选</strong>：
+              <ul class="checklist">
+                <li>能接受每月 $5 → <strong>直接付费</strong>，1000 万请求是免费的 100 倍，最省心</li>
+                <li>完全不想付费、且有多个现成账号 → 多账号</li>
+                <li>只想跑纯 HTTP 转发、不需要 connect() → Snippets</li>
+              </ul>
+            </div>
+
+            <div class="hint note-box mt-3">
+              <strong>Claude 的判断</strong>：为了省 $5 去注册并维护 N 个账号，
+              要承担 N 份封号风险，通常不划算。多账号适合「就是不想付钱」的人，不适合「想省事」的人。
+            </div>
+          </v-expansion-panel-text>
+        </v-expansion-panel>
+
+        <!-- ② 多账号配置 -->
+        <v-expansion-panel>
+          <v-expansion-panel-title>
+            <span class="panel-title">② 多账号多节点：具体怎么配</span>
+          </v-expansion-panel-title>
+          <v-expansion-panel-text>
+
+            <div class="warn-strip">
+              <strong>前提</strong>：必须是<strong>真正不同的 Cloudflare 账号</strong>。
+              同一个账号下开 3 个 Worker，额度是<strong>共享</strong>的，不会变成 30 万。
+            </div>
+
+            <div class="step">
+              <div class="step-no">1</div>
+              <div class="step-body">
+                <div class="step-title">面板账号：记下 UUID</div>
+                <div class="hint">
+                  打开已有的 EdgeTunnel 2.0 面板 → <strong>⚙️ 详细配置信息</strong> → 复制 <code>UUID</code>。
+                  这一串是所有节点共用的身份标识。
+                </div>
+              </div>
+            </div>
+
+            <div class="step">
+              <div class="step-no">2</div>
+              <div class="step-body">
+                <div class="step-title">第二账号：部署节点</div>
+                <div class="hint">
+                  换一个 Cloudflare 账号，用同一份 <code>edgetunnel-main.zip</code> 部署 Pages。
+                  <strong>不要设 ADMIN，不要绑 KV</strong> —— 它只当节点，不需要管理面板。
+                </div>
+              </div>
+            </div>
+
+            <div class="step">
+              <div class="step-no">3</div>
+              <div class="step-body">
+                <div class="step-title">给节点设 UUID</div>
+                <div class="hint">
+                  第二账号的项目 → 设置 → 变量 → 添加：名称为 <code>UUID</code>，值为第一步复制的那个。
+                  然后<strong>重新部署一次</strong>让变量生效。
+                </div>
+                <pre class="code-block">变量名  UUID
+变量值  8fc6a982-9862-4362-846f-a7039c5e2e47   ← 换成你自己的</pre>
+              </div>
+            </div>
+
+            <div class="step">
+              <div class="step-no">4</div>
+              <div class="step-body">
+                <div class="step-title">给节点绑域名</div>
+                <div class="hint">
+                  第二账号的项目 → 自定义域 → 绑一个<strong>和面板不同的</strong>子域名，例如：
+                </div>
+                <pre class="code-block">面板     edt2.example.com
+节点 2   edt2-2.example.com
+节点 3   edt2-3.example.com</pre>
+                <div class="hint mt-1">绑完等 10~30 分钟验证通过。</div>
+              </div>
+            </div>
+
+            <div class="step">
+              <div class="step-no">5</div>
+              <div class="step-body">
+                <div class="step-title">面板把节点域名加进 HOSTS</div>
+                <div class="hint">
+                  回到面板 → <strong>⚙️ 详细配置信息</strong> → <code>HOSTS</code>，把节点 2、节点 3 的域名都加进去，保存。
+                </div>
+                <pre class="code-block">HOSTS:
+edt2.example.com
+edt2-2.example.com
+edt2-3.example.com</pre>
+              </div>
+            </div>
+
+            <div class="step">
+              <div class="step-no">6</div>
+              <div class="step-body">
+                <div class="step-title">重新拉订阅验证</div>
+                <div class="hint">
+                  客户端删掉旧订阅重新导入。节点列表里应该出现不同域名的节点，顺序每次刷新都不一样。
+                </div>
+                <div class="hint mt-1">
+                  <strong>顺序会变是正常的</strong> —— 面板每次生成订阅都会把 HOSTS 打乱，
+                  让流量自然分散到不同账号。
+                </div>
+              </div>
+            </div>
+
+            <div class="hint note-box mt-3">
+              <strong>它为什么能降低 SNI 阻断</strong>
+              <br />
+              面板在替换订阅里的域名时，会把域名中的 <code>*</code> 换成 3~16 位随机字符：
+              <br />
+              <code>*.example.com</code> → <code>a3k9x2f.example.com</code>
+              <br />
+              每次订阅拿到的子域都不同，批量检测很难建立稳定的黑名单。
+              这条与账号数量无关，<strong>单个账号也能用</strong>。
+            </div>
+
+            <div class="hint note-box mt-3 warn">
+              <strong>三个必须注意的</strong>
+              <ul class="checklist">
+                <li><strong>账号之间不能有关联特征</strong>：同一邮箱后缀、同一张卡、同一 IP 批量注册，会被风控串起来一起封</li>
+                <li><strong>不要公开分享节点</strong>：一旦被滥用，轻则限速重则封号</li>
+                <li><strong>某个账号挂了只影响它自己的节点</strong>：这正是多账号的价值——故障被隔离了</li>
+              </ul>
+            </div>
+
+          </v-expansion-panel-text>
+        </v-expansion-panel>
+
+        <!-- ③ 开源项目 -->
+        <v-expansion-panel>
+          <v-expansion-panel-title>
+            <span class="panel-title">③ 开源项目：别人是怎么做的</span>
+          </v-expansion-panel-title>
+          <v-expansion-panel-text>
+
+            <div class="hint mb-3">
+              这几个项目都在解决同一个问题——<strong>把请求分散到多个 Worker / 多个账号</strong>。
+              按需选用，不必全上。
+            </div>
+
+            <div class="proj-card">
+              <div class="proj-head">
+                <span class="proj-name">FlareTunnel</span>
+                <span class="proj-lang">Go</span>
+                <span class="proj-tag">多账号管理</span>
+              </div>
+              <div class="proj-desc">
+                自动部署多个 Worker 作为代理端点，支持随机 / 轮询负载均衡。
+                最有价值的是<strong>按账号的配额统计</strong>——能看出哪个账号快用完了。
+                还带黑名单过滤。
+              </div>
+              <div class="proj-meta">
+                <span>适合：想统一管理多个账号，需要知道每个账号的剩余额度</span>
+                <br />
+                <a href="https://github.com/MorDavid/FlareTunnel" target="_blank" rel="noopener">github.com/MorDavid/FlareTunnel</a>
+              </div>
+            </div>
+
+            <div class="proj-card">
+              <div class="proj-head">
+                <span class="proj-name">flaregun</span>
+                <span class="proj-lang">npm</span>
+                <span class="proj-tag">一行命令部署</span>
+              </div>
+              <div class="proj-desc">
+                <code>flaregun up 5</code> 直接部署 5 个 Worker。
+                三种轮换策略：round-robin、random、<strong>adaptive</strong>
+                （遇到 429 / 5xx 自动指数退避）。所有命令支持 <code>--json</code>，方便脚本化。
+              </div>
+              <div class="proj-meta">
+                <span>适合：想要最少手工步骤，快速拉起一批</span>
+                <br />
+                <a href="https://www.npmjs.com/package/@miclivs/flaregun" target="_blank" rel="noopener">npmjs.com/package/@miclivs/flaregun</a>
+              </div>
+            </div>
+
+            <div class="proj-card">
+              <div class="proj-head">
+                <span class="proj-name">ech-snippets</span>
+                <span class="proj-lang">JS</span>
+                <span class="proj-tag">绕过额度</span>
+              </div>
+              <div class="proj-desc">
+                思路和别人不一样：把代码改成用 <strong>Cloudflare Snippets</strong> 部署。
+                Snippets <strong>不按 Worker 请求计费</strong>，因此完全绕开每天 10 万的限制。
+              </div>
+              <div class="proj-meta">
+                <span>适合：纯 HTTP 转发场景</span>
+                <br />
+                <span class="proj-warn">注意：Snippets 不能使用 connect()，只能做 HTTP 层转发</span>
+                <br />
+                <a href="https://github.com/Neomanbeta/ech-snippets" target="_blank" rel="noopener">github.com/Neomanbeta/ech-snippets</a>
+              </div>
+            </div>
+
+            <div class="proj-card">
+              <div class="proj-head">
+                <span class="proj-name">cf-relay</span>
+                <span class="proj-lang">npm</span>
+                <span class="proj-tag">极简中继</span>
+              </div>
+              <div class="proj-desc">
+                一键部署的边缘中继 Worker，通过 <code>x-relay-target</code> / <code>x-relay-path</code>
+                请求头转发。官方建议「在多个 Cloudflare 账号部署同一 Worker」来获得更多出口 IP 和配额。
+              </div>
+              <div class="proj-meta">
+                <span>适合：只要一个最简单的转发层</span>
+                <br />
+                <a href="https://www.npmjs.com/package/cf-relay" target="_blank" rel="noopener">npmjs.com/package/cf-relay</a>
+              </div>
+            </div>
+
+            <div class="hint note-box mt-3">
+              <strong>和 EdgeTunnel 2.0 自带方案的关系</strong>
+              <br />
+              EdgeTunnel 2.0 的「单面板多节点」已经覆盖了大部分需求，上面这些项目是<strong>替代或补充</strong>：
+              <ul class="checklist">
+                <li>想要配额统计 → FlareTunnel</li>
+                <li>想要最少手工 → flaregun</li>
+                <li>想彻底绕开 Worker 计费 → ech-snippets</li>
+                <li>只要转发，不要面板 → cf-relay</li>
+              </ul>
+            </div>
+
+          </v-expansion-panel-text>
+        </v-expansion-panel>
+
+        <!-- ④ 和 CFSTX 配合 -->
+        <v-expansion-panel>
+          <v-expansion-panel-title>
+            <span class="panel-title">④ 和 CFSTX 配合：优选 IP 怎么喂进去</span>
+          </v-expansion-panel-title>
+          <v-expansion-panel-text>
+
+            <div class="hint mb-3">
+              多节点部署好之后，每个<strong>域名</strong>都需要各自的优选 IP——
+              不同域名的边缘路由不一样，同一批 IP 不一定都服务它们。
+            </div>
+
+            <div class="step">
+              <div class="step-no">1</div>
+              <div class="step-body">
+                <div class="step-title">在「优选IP」页打开自定义测速域名</div>
+                <div class="hint">
+                  填你要用的那个节点域名，测出只服务它的 IP。
+                  <strong>有几个节点域名就测几次</strong>，各测各的。
+                </div>
+              </div>
+            </div>
+
+            <div class="step">
+              <div class="step-no">2</div>
+              <div class="step-body">
+                <div class="step-title">导出 TXT</div>
+                <div class="hint">
+                  CFSTX 导出的格式是 <code>IP:端口#地区 速度</code>，
+                  和 EdgeTunnel 2.0 的「自定义优选」格式<strong>天然兼容</strong>：
+                </div>
+                <pre class="code-block">27.44.142.135:10001#HKG 40.66MB/s
+120.240.179.158:10001#HKG 25.22MB/s
+104.234.174.220:443#SIN 12.06MB/s</pre>
+              </div>
+            </div>
+
+            <div class="step">
+              <div class="step-no">3</div>
+              <div class="step-body">
+                <div class="step-title">粘进 EdgeTunnel 2.0</div>
+                <div class="hint">
+                  面板 → 自定义优选 → 手动添加 → 粘贴 → 保存。
+                  需要 EdgeTunnel 自动定时拉取的，可以用「优选 API」，
+                  填一个返回同样格式的 URL。
+                </div>
+              </div>
+            </div>
+
+            <div class="hint note-box mt-3">
+              <strong>当前限制</strong>：CFSTX 一次只能探测<strong>一个</strong>域名。
+              有多个节点域名时，只能一个个测、分别导出。
+              <br />
+              多域名探测在计划中，还没做。
+            </div>
+
+          </v-expansion-panel-text>
+        </v-expansion-panel>
+
+      </v-expansion-panels>
+    </v-card>
   </div>
 </template>
 
@@ -679,5 +1018,193 @@ onMounted(loadHosts)
 
 .checklist li::marker {
   color: #4f6acd;
+}
+
+/* ---------------------------------------------------------------- */
+/* 进阶：多账号与节点池                                              */
+/* ---------------------------------------------------------------- */
+
+.adv-panels {
+  background: transparent;
+}
+
+.adv-panels :deep(.v-expansion-panel) {
+  background: #17171c !important;
+  border: 1px solid #26262e;
+  border-radius: 8px !important;
+  margin-bottom: 8px;
+}
+
+.adv-panels :deep(.v-expansion-panel-title) {
+  min-height: 46px;
+  font-size: 13px;
+  color: #d4d4d8;
+  padding: 0 14px;
+}
+
+.adv-panels :deep(.v-expansion-panel-title--active) {
+  color: #c7d2fe;
+}
+
+.adv-panels :deep(.v-expansion-panel-text__wrapper) {
+  padding: 4px 14px 16px;
+}
+
+.adv-panels :deep(.v-expansion-panel-title .v-expansion-panel-title__icon) {
+  margin-left: auto;
+}
+
+.panel-title {
+  font-weight: 600;
+}
+
+/* 方案对比表 */
+.cmp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin: 4px 0 8px;
+}
+
+.cmp-table th {
+  text-align: left;
+  font-weight: 600;
+  color: #a1a1aa;
+  padding: 7px 10px;
+  border-bottom: 1px solid #2a2a33;
+  white-space: nowrap;
+}
+
+.cmp-table td {
+  padding: 7px 10px;
+  color: #8b8b96;
+  border-bottom: 1px solid #202027;
+  vertical-align: top;
+}
+
+.cmp-table td strong {
+  color: #d4d4d8;
+}
+
+.cmp-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* 提示块 */
+.note-box {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: #17171c;
+  border-left: 3px solid #4f6acd;
+  font-size: 12px;
+  line-height: 1.8;
+  color: #8b8b96;
+}
+
+.note-box code,
+.hint code {
+  font-family: 'Cascadia Mono', 'Consolas', monospace;
+  font-size: 11.5px;
+  color: #a5b4fc;
+  background: rgba(79, 106, 205, 0.12);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.note-box.warn {
+  border-left-color: #e8a33d;
+}
+
+/* 前提/警告条 */
+.warn-strip {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: rgba(232, 163, 61, 0.08);
+  border: 1px solid rgba(232, 163, 61, 0.25);
+  font-size: 12px;
+  line-height: 1.8;
+  color: #d4b26a;
+}
+
+.warn-strip strong {
+  color: #e8a33d;
+}
+
+/* 开源项目卡片 */
+.proj-card {
+  margin-bottom: 10px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #131318;
+  border: 1px solid #26262e;
+}
+
+.proj-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.proj-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #e4e4e7;
+}
+
+.proj-lang {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #7c9cff;
+  background: rgba(79, 106, 205, 0.16);
+  padding: 1px 7px;
+  border-radius: 10px;
+}
+
+.proj-tag {
+  font-size: 10.5px;
+  color: #5fbf7f;
+  background: rgba(95, 191, 127, 0.14);
+  padding: 1px 7px;
+  border-radius: 10px;
+}
+
+.proj-desc {
+  font-size: 12px;
+  line-height: 1.75;
+  color: #8b8b96;
+  margin-bottom: 6px;
+}
+
+.proj-desc code {
+  font-family: 'Cascadia Mono', 'Consolas', monospace;
+  font-size: 11px;
+  color: #a5b4fc;
+  background: rgba(79, 106, 205, 0.12);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.proj-meta {
+  font-size: 11.5px;
+  line-height: 1.8;
+  color: #71717a;
+}
+
+.proj-meta a {
+  color: #7c9cff;
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.proj-meta a:hover {
+  text-decoration: underline;
+}
+
+.proj-warn {
+  color: #d4b26a;
 }
 </style>
