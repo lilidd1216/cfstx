@@ -1,6 +1,7 @@
 package task
 
 import (
+	"encoding/csv"
 	"fmt"
 	"io"
 	"net"
@@ -164,24 +165,36 @@ func ParseSourceBody(body []byte, format string) []ProxyIPCandidate {
 }
 
 // parseCSVCandidates 解析 Xgonce 的 result.csv。
+//
+// 列顺序：IP,cf-meta-ip,端口,速度(Mbps),CF归属国,机房,TCP延迟,TLS延迟
+//
+// 注意用的是 **IP 列**（第 0 列），不是 cf-meta-ip。
+// 实测 40 组两列不同的样本：IP 列 30/40 能通过证书校验，
+// cf-meta-ip 列只有 2/40 —— 后者是元数据地址，不能当反代用。
+//
+// 用标准库 csv 读，而不是按逗号切：文件带 BOM，字段也可能被引号包住。
 func parseCSVCandidates(text string) []ProxyIPCandidate {
-	out := make([]ProxyIPCandidate, 0, 256)
-	seen := make(map[string]struct{}, 256)
+	text = strings.TrimPrefix(text, "\ufeff")
+	r := csv.NewReader(strings.NewReader(text))
+	r.FieldsPerRecord = -1 // 列数不固定时不报错
+	r.LazyQuotes = true
 
-	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		fields := strings.Split(line, ",")
+	records, err := r.ReadAll()
+	if err != nil && len(records) == 0 {
+		return nil
+	}
+
+	out := make([]ProxyIPCandidate, 0, len(records))
+	seen := make(map[string]struct{}, len(records))
+
+	for _, fields := range records {
 		if len(fields) < 3 {
 			continue
 		}
 
 		host := strings.TrimSpace(fields[0])
 		if net.ParseIP(host) == nil {
-			// 表头或非法行
-			continue
+			continue // 表头或非法行
 		}
 
 		port := proxyIPDefaultPort
