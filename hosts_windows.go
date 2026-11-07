@@ -89,6 +89,13 @@ func validateHostsInput(domain, ip string) (string, string, error) {
 	domain = task.NormalizeProbeDomain(domain)
 	ip = strings.TrimSpace(ip)
 
+	// hosts 只认 IP，不认端口。用户可能直接粘了 "1.2.3.4:443" 或
+	// "[2606:4700::1]:8443"，这里自动把端口和方括号去掉。
+	if h, _, err := net.SplitHostPort(ip); err == nil {
+		ip = h
+	}
+	ip = strings.Trim(ip, "[]")
+
 	if domain == "" {
 		return "", "", fmt.Errorf("请填写域名")
 	}

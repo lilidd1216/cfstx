@@ -14,11 +14,12 @@ const STORAGE_IP = 'cfstx.hosts.ip'
 const hosts = ref({ isAdmin: false, hostsPath: '', entries: [], backupDir: '' })
 // 记住上次填写的域名与 IP，切换页面或重启后不用重填
 const domain = ref(localStorage.getItem(STORAGE_DOMAIN) || '')
-const selectedIP = ref(localStorage.getItem(STORAGE_IP) || '')
+// 要写入 hosts 的 IP：可以直接手填，也可以点下面的测速结果填入
+const targetIP = ref(localStorage.getItem(STORAGE_IP) || '')
 const busy = ref(false)
 
 watch(domain, (v) => localStorage.setItem(STORAGE_DOMAIN, v || ''))
-watch(selectedIP, (v) => localStorage.setItem(STORAGE_IP, v || ''))
+watch(targetIP, (v) => localStorage.setItem(STORAGE_IP, v || ''))
 
 // hosts 只能映射 IP、不能指定端口，所以只列 443 端口的结果。
 // 用点击列表而不是下拉框：避免浮层组件在 WebView2 中的兼容问题。
@@ -34,6 +35,46 @@ function normalizeDomain() {
   v = v.replace(/:\d+$/, '').replace(/\.$/, '')
   domain.value = v.toLowerCase()
 }
+
+// hosts 只认 IP，不认端口：用户粘 1.2.3.4:443 或 [::1]:8443 时自动去掉端口
+function normalizeIPInput() {
+  let v = String(targetIP.value || '').trim()
+  if (!v) return
+
+  // 去掉可能粘进来的协议和路径
+  const scheme = v.indexOf('://')
+  if (scheme >= 0) v = v.slice(scheme + 3)
+  const cut = v.search(/[/?#]/)
+  if (cut >= 0) v = v.slice(0, cut)
+
+  // [IPv6]:port
+  if (v.startsWith('[')) {
+    const end = v.indexOf(']')
+    if (end > 0) {
+      v = v.slice(1, end)
+    }
+  } else if (/^(\d{1,3}\.){3}\d{1,3}:\d+$/.test(v)) {
+    // IPv4:port
+    v = v.slice(0, v.indexOf(':'))
+  }
+  targetIP.value = v.trim()
+}
+
+// 即时校验，让用户在点按钮之前就知道格式对不对
+const ipState = computed(() => {
+  const v = String(targetIP.value || '').trim()
+  if (!v) return { ok: false, msg: '' }
+
+  const isV4 = /^(\d{1,3}\.){3}\d{1,3}$/.test(v) &&
+    v.split('.').every((o) => Number(o) >= 0 && Number(o) <= 255)
+  if (isV4) return { ok: true, msg: '' }
+
+  // IPv6：只要包含冒号且字符合法就放行，精确校验交给后端
+  if (v.includes(':') && /^[0-9a-fA-F:.]+$/.test(v)) {
+    return { ok: true, msg: '' }
+  }
+  return { ok: false, msg: 'IP 格式不正确' }
+})
 
 const candidates = computed(() =>
   (props.results || [])
@@ -92,10 +133,12 @@ async function loadHosts() {
 
 async function apply() {
   busy.value = true
+  const ip = targetIP.value.trim()
+  const d = domain.value.trim()
   try {
-    await httpPost('/api/hosts/apply', { domain: domain.value.trim(), ip: selectedIP.value })
+    await httpPost('/api/hosts/apply', { domain: d, ip })
     await loadHosts()
-    emit('toast', `已写入 hosts：${selectedIP.value} → ${domain.value.trim()}`, 'success')
+    emit('toast', `已写入 hosts：${ip} → ${d}`, 'success')
   } catch (e) {
     emit('toast', String(e.message || e), 'error')
   } finally {
@@ -186,10 +229,28 @@ onMounted(loadHosts)
         @blur="normalizeDomain"
       />
 
-      <div class="ip-label">选择要应用的 IP（仅列出 443 端口的结果）</div>
+      <v-text-field
+        v-model="targetIP"
+        label="IP"
+        placeholder="例如 1.2.3.4"
+        density="compact"
+        prepend-inner-icon="mdi-ip-network-outline"
+        :error="!!ipState.msg"
+        :error-messages="ipState.msg"
+        hint="可以直接手填，也可以从下面点选测速结果；带端口会自动去掉"
+        persistent-hint
+        class="ip-input"
+        autocomplete="off"
+        @blur="normalizeIPInput"
+      />
+
+      <div class="ip-label">
+        从测速结果中选择
+        <span v-if="candidates.length" class="ip-count">（{{ candidates.length }} 个 443 端口的结果）</span>
+      </div>
 
       <div v-if="!candidates.length" class="empty">
-        暂无可用 IP —— 先在「优选IP」页面跑一次测速
+        暂无测速结果 —— 也可以直接在上面手动填写 IP
       </div>
 
       <div v-else class="ip-list">
@@ -198,20 +259,20 @@ onMounted(loadHosts)
           :key="c.value"
           type="button"
           class="ip-item"
-          :class="{ active: selectedIP === c.value }"
-          @click="selectedIP = c.value"
+          :class="{ active: targetIP === c.value }"
+          @click="targetIP = c.value"
         >
           <span class="ip-addr mono">{{ c.value }}</span>
           <span class="ip-meta">{{ c.delay }}ms · {{ c.speed }}MB/s · {{ c.colo }}</span>
         </button>
       </div>
 
-      <div class="d-flex justify-end mt-3">
+      <div class="d-flex justify-end mt-2">
         <v-btn
           color="primary"
           variant="flat"
           :loading="busy"
-          :disabled="!hosts.isAdmin || !domain.trim() || !selectedIP"
+          :disabled="!hosts.isAdmin || !domain.trim() || !ipState.ok"
           @click="apply"
         >
           应用到 Hosts
@@ -380,11 +441,19 @@ onMounted(loadHosts)
   padding: 8px 0;
 }
 
-/* IP 候选列表 */
+/* IP 输入与候选列表 */
+.ip-input {
+  margin-top: 4px;
+}
+
 .ip-label {
   font-size: 12px;
   color: #8b8b96;
   margin: 16px 0 8px;
+}
+
+.ip-count {
+  color: #5b5b66;
 }
 
 .ip-list {

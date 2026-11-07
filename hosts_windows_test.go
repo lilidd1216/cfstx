@@ -157,27 +157,32 @@ func TestValidateHostsInput(t *testing.T) {
 		domain     string
 		ip         string
 		wantDomain string
+		wantIP     string
 		wantErr    string
 	}{
-		{"标准写法", "fast3.example.com", "1.2.3.4", "fast3.example.com", ""},
-		{"带协议和斜杠", "https://fast3.example.com/", "1.2.3.4", "fast3.example.com", ""},
-		{"带路径和查询", "https://Fast3.Example.COM/admin?x=1", "1.2.3.4", "fast3.example.com", ""},
-		{"带端口", "fast3.example.com:8443", "1.2.3.4", "fast3.example.com", ""},
-		{"前后空格", "  fast3.example.com  ", "1.2.3.4", "fast3.example.com", ""},
-		{"空域名", "", "1.2.3.4", "", "请填写域名"},
-		{"只有协议", "https://", "1.2.3.4", "", "请填写域名"},
-		{"空 IP", "fast3.example.com", "", "", "请选择一个 IP"},
-		{"非法 IP", "fast3.example.com", "999.1.1.1", "", "IP 格式不正确"},
-		{"双点域名", "a..b", "1.2.3.4", "", "域名格式不正确"},
-		{"IPv6 地址", "fast3.example.com", "2606:4700::1", "fast3.example.com", ""},
+		{"标准写法", "fast3.example.com", "1.2.3.4", "fast3.example.com", "1.2.3.4", ""},
+		{"带协议和斜杠", "https://fast3.example.com/", "1.2.3.4", "fast3.example.com", "1.2.3.4", ""},
+		{"带路径和查询", "https://Fast3.Example.COM/admin?x=1", "1.2.3.4", "fast3.example.com", "1.2.3.4", ""},
+		{"带端口", "fast3.example.com:8443", "1.2.3.4", "fast3.example.com", "1.2.3.4", ""},
+		{"前后空格", "  fast3.example.com  ", "1.2.3.4", "fast3.example.com", "1.2.3.4", ""},
+		{"空域名", "", "1.2.3.4", "", "", "请填写域名"},
+		{"只有协议", "https://", "1.2.3.4", "", "", "请填写域名"},
+		{"空 IP", "fast3.example.com", "", "", "", "请选择一个 IP"},
+		{"非法 IP", "fast3.example.com", "999.1.1.1", "", "", "IP 格式不正确"},
+		{"双点域名", "a..b", "1.2.3.4", "", "", "域名格式不正确"},
+		{"IPv6 地址", "fast3.example.com", "2606:4700::1", "fast3.example.com", "2606:4700::1", ""},
+		// hosts 只认 IP，用户粘带端口的地址时要自动去掉端口
+		{"IPv4 带端口", "fast3.example.com", "1.2.3.4:443", "fast3.example.com", "1.2.3.4", ""},
+		{"IPv6 带端口", "fast3.example.com", "[2606:4700::1]:8443", "fast3.example.com", "2606:4700::1", ""},
+		{"IPv6 带方括号", "fast3.example.com", "[2606:4700::1]", "fast3.example.com", "2606:4700::1", ""},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			gotDomain, _, err := validateHostsInput(c.domain, c.ip)
+			gotDomain, gotIP, err := validateHostsInput(c.domain, c.ip)
 			if c.wantErr != "" {
 				if err == nil {
-					t.Fatalf("期望报错 %q，实际通过（domain=%q）", c.wantErr, gotDomain)
+					t.Fatalf("期望报错 %q，实际通过（domain=%q ip=%q）", c.wantErr, gotDomain, gotIP)
 				}
 				if !strings.Contains(err.Error(), c.wantErr) {
 					t.Errorf("错误信息 = %q，期望包含 %q", err.Error(), c.wantErr)
@@ -189,6 +194,9 @@ func TestValidateHostsInput(t *testing.T) {
 			}
 			if gotDomain != c.wantDomain {
 				t.Errorf("domain = %q，期望 %q", gotDomain, c.wantDomain)
+			}
+			if gotIP != c.wantIP {
+				t.Errorf("ip = %q，期望 %q", gotIP, c.wantIP)
 			}
 		})
 	}
