@@ -340,8 +340,17 @@ func FetchLocalPublicIP(timeout time.Duration) string {
 	client := &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
-			Proxy:       nil, // 强制直连，见上
-			DialContext: (&net.Dialer{Timeout: timeout}).DialContext,
+			Proxy: nil, // 强制直连，见上
+			// 优先 IPv4：ProxyIP 检测走的是 IPv4，两边出口才可比。
+			// 有些网络 IPv6 优先，这里拿到 v6 地址的话和 v4 出口永远不等，
+			// 会把所有直连项漏判成「真中转」。取不到 v4 再退回默认。
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				d := &net.Dialer{Timeout: timeout}
+				if conn, err := d.DialContext(ctx, "tcp4", addr); err == nil {
+					return conn, nil
+				}
+				return d.DialContext(ctx, network, addr)
+			},
 		},
 	}
 	// 一次性客户端，用完把空闲连接关掉

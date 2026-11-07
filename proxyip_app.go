@@ -130,6 +130,10 @@ func (a *App) runProxyIPCheck(cands []task.ProxyIPCandidate, concurrency int, do
 	directCount := 0 // 直连 Cloudflare，只能当客户端入口用
 
 	results := task.ProbeProxyIPs(cands, domain, concurrency, localIP, func(r task.ProxyIPResult) {
+		// 这个回调会被多条探测 goroutine 并发调用（ProbeProxyIPs 里没有串行化），
+		// 计数必须加锁；快照也在锁内取，避免 emit 时读到别的 goroutine
+		// 刚改了一半的值。
+		a.proxyMu.Lock()
 		done++
 		if r.OK {
 			if r.Direct {
@@ -138,40 +142,44 @@ func (a *App) runProxyIPCheck(cands []task.ProxyIPCandidate, concurrency int, do
 				okCount++
 			}
 		}
-		a.proxyMu.Lock()
 		a.proxyDone = done
+		snapDone, snapOK, snapDirect := done, okCount, directCount
 		a.proxyMu.Unlock()
 
 		a.emit("proxyip:progress", map[string]any{
-			"done":        done,
+			"done":        snapDone,
 			"total":       len(cands),
-			"okCount":     okCount,
-			"directCount": directCount,
+			"okCount":     snapOK,
+			"directCount": snapDirect,
 			"localIp":     localIP,
 			"result":      r,
 		})
 	})
 
+	// 到这里所有探测 goroutine 都已结束（ProbeProxyIPs 内部 wg.Wait），
+	// 下面这些读取没有并发，但结果对象还是统一在锁内写，
+	// 避免和并发的 GetProxyIPStatus 抢。
 	a.proxyMu.Lock()
 	a.proxyResults = results
 	a.proxyDone = done
+	finalDone, finalOK, finalDirect := done, okCount, directCount
 	a.proxyMu.Unlock()
 
-	stopped := done < len(cands)
+	stopped := finalDone < len(cands)
 	stoppedNote := ""
 	if stopped {
 		stoppedNote = "（已手动停止）"
 	}
 	a.appendLog("info", "proxyip", fmt.Sprintf(
 		"ProxyIP 检测完成 | %d 个候选，%d 个真中转，%d 个直连 Cloudflare（不能填 PROXYIP）%s",
-		len(cands), okCount, directCount, stoppedNote))
+		len(cands), finalOK, finalDirect, stoppedNote))
 
 	a.emit("proxyip:finished", map[string]any{
 		"results":     results,
-		"okCount":     okCount,
-		"directCount": directCount,
+		"okCount":     finalOK,
+		"directCount": finalDirect,
 		"localIp":     localIP,
-		"done":        done,
+		"done":        finalDone,
 		"total":       len(cands),
 		"seconds":     time.Since(start).Seconds(),
 		"stopped":     stopped,
