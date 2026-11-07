@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"crypto/tls"
 	"io"
+	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,6 +23,34 @@ const (
 	probeMaxConcurrency = 300
 )
 
+// NormalizeProbeDomain 把用户随手粘来的各种写法归一成纯 hostname。
+//
+// 用户常见的输入是浏览器地址栏复制来的 https://xxx/，或用带端口的 host:443。
+// 直接拼接到 "https://" 后面会得到 https://https://xxx//cdn-cgi/trace，
+// 解析出的 Host 变成 "https"，所有探测必然失败。所以在入口统一收拾干净。
+//
+//	https://fast3.example.com/      → fast3.example.com
+//	fast3.example.com/admin         → fast3.example.com
+//	fast3.example.com:8443          → fast3.example.com
+//	"  Fast3.Example.COM  "         → fast3.example.com
+func NormalizeProbeDomain(s string) string {
+	s = strings.TrimSpace(s)
+	// 去掉协议前缀（http://、https://，以及任何 xxx://）
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+	}
+	// 去掉路径、查询串、片段
+	if i := strings.IndexAny(s, "/?#"); i >= 0 {
+		s = s[:i]
+	}
+	// 去掉端口，兼容 [::1]:443 这类 IPv6 写法
+	if h, _, err := net.SplitHostPort(s); err == nil {
+		s = h
+	}
+	s = strings.TrimSuffix(strings.TrimSpace(s), ".")
+	return strings.ToLower(s)
+}
+
 // ProbeDomain 筛选出真正服务指定域名的目标。
 //
 // 背景：Cloudflare 的 Anycast IP 并不是每个都能服务所有域名。
@@ -33,6 +63,8 @@ const (
 //
 // 该路径绕过 Worker，不消耗 Workers 请求配额。
 func ProbeDomain(targets []*Target, domain string, onProgress func(done, total int)) []*Target {
+	// 兜底：调用方若忘了规范化，这里保证不会拼出非法 URL
+	domain = NormalizeProbeDomain(domain)
 	if domain == "" || len(targets) == 0 {
 		return targets
 	}

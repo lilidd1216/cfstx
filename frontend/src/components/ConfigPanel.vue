@@ -9,6 +9,19 @@ const emit = defineEmits(['pick-ip-file', 'open-bestcf', 'open-cmliu', 'apply-pr
 
 const disabled = computed(() => props.running)
 
+// 与后端 task.NormalizeProbeDomain 保持一致：粘贴浏览器地址后立即清理，
+// 避免 https://xxx/ 被原样拼进探测 URL（v1.1.5 的全数剔除问题）。
+function normalizeProbeDomain() {
+  let v = String(config.value.probeDomain || '').trim()
+  if (!v) return
+  const scheme = v.indexOf('://')
+  if (scheme >= 0) v = v.slice(scheme + 3)
+  const cut = v.search(/[/?#]/)
+  if (cut >= 0) v = v.slice(0, cut)
+  v = v.replace(/:\d+$/, '').replace(/\.$/, '')
+  config.value.probeDomain = v.toLowerCase()
+}
+
 // 场景预设：覆盖大多数用户的实际用法，套用后仍可手动微调
 const presets = [
   {
@@ -177,10 +190,13 @@ const customEnabled = computed(() => sources.value.includes('custom'))
         v-model="config.probeDomain"
         label="域名"
         placeholder="例如：fast3.example.com"
+        hint="只填域名本身，不要带 https:// 或末尾斜杠；粘贴完整网址会自动清理"
+        persistent-hint
         :disabled="disabled"
         density="compact"
         prepend-inner-icon="mdi-web-check"
         class="mt-1"
+        @blur="normalizeProbeDomain"
       />
     </v-card>
 

@@ -491,6 +491,30 @@ func (a *App) runTest(cfg Config) {
 	// 域名探测：先用 /cdn-cgi/trace 剔除不服务该域名的 IP
 	// 该路径绕过 Worker，不消耗 Workers 请求配额
 	if cfg.ProbeEnabled && cfg.ProbeDomain != "" {
+		// 用户多半是从浏览器地址栏粘过来的（带 https:// 和末尾斜杠），先归一化
+		probeDomain := task.NormalizeProbeDomain(cfg.ProbeDomain)
+		if probeDomain == "" {
+			d := &Diagnosis{
+				Reason:     fmt.Sprintf("测速域名「%s」无效，无法解析出主机名", cfg.ProbeDomain),
+				Suggestion: "只填写域名本身，例如 fast3.example.com，不要带 https:// 或末尾的斜杠",
+			}
+			a.appendLog("warn", "diagnosis", d.Reason+"；建议："+d.Suggestion)
+			a.mu.Lock()
+			a.phase = "done"
+			a.mu.Unlock()
+			a.emit("test:finished", map[string]any{
+				"results":   []ResultItem{},
+				"duration":  time.Since(start).Seconds(),
+				"diagnosis": d,
+			})
+			return
+		}
+		if probeDomain != strings.TrimSpace(cfg.ProbeDomain) {
+			a.appendLog("info", "probe", fmt.Sprintf(
+				"测速域名已自动规范化为 %s", probeDomain))
+		}
+		cfg.ProbeDomain = probeDomain
+
 		base := task.LoadTargets()
 		totalTargets = len(base)
 		a.appendLog("info", "probe", fmt.Sprintf(

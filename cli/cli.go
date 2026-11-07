@@ -172,7 +172,12 @@ CFSTX ` + version.Current + `
 	// 域名探测：剔除不服务指定域名的 IP
 	// /cdn-cgi/trace 由边缘节点直接响应，绕过 Worker，不消耗 Workers 配额
 	if probeDomain != "" {
+		probeDomain = task.NormalizeProbeDomain(probeDomain)
 		base := task.LoadTargets()
+		if probeDomain == "" {
+			utils.Red.Println("[错误] -probe 的域名无效，请只填写域名本身，例如 fast3.example.com")
+			return
+		}
 		if len(base) == 0 {
 			utils.Yellow.Println("[警告] 没有加载到任何 IP，跳过域名探测")
 		} else {
