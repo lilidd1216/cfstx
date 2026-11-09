@@ -410,6 +410,10 @@ function openCmliu() {
   httpPost('/api/open-url', { url: 'https://github.com/cmliu/cmliu' }).catch(() => {})
 }
 
+function openCFDomains() {
+  httpPost('/api/open-url', { url: 'https://github.com/cmliu/CF-Pages-BestCF' }).catch(() => {})
+}
+
 // ---------------------------------------------------------------------------
 // 更新检查
 // ---------------------------------------------------------------------------
@@ -864,6 +868,7 @@ onBeforeUnmount(() => {
           @pick-ip-file="pickIpFile"
           @open-bestcf="openBestCF"
           @open-cmliu="openCmliu"
+          @open-cfdomains="openCFDomains"
           @apply-preset="applyPreset"
         />
 

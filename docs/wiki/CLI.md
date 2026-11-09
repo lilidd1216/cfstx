@@ -72,6 +72,9 @@ https://gitee.com/liliaic/cfstx
         Cloudflare官方IP段；从 api.cloudflare.com 获取官方发布的网段并展开测速
     -cmliu
         cmliu的CF-CIDR；使用社区维护的 Cloudflare 网段列表
+    -cfdomains
+        CF官方域名池；抓取 BestCF 维护的 CF 域名清单（jsDelivr 等国内镜像优先），
+        通过 DoH 解析成 IP，只保留落在 CF 网段内的结果
     -probe fast3.example.com
         自定义测速域名；延迟测速前先用 <域名>/cdn-cgi/trace 探测哪些 IP 真正服务该域名，
         自动剔除不适配的 IP（这类 IP 在客户端里会表现为大量连接超时）；
@@ -117,10 +120,12 @@ cfstx -probe fast3.example.com -dd
 ### 组合多个在线来源
 
 ```bat
-cfstx -bestcf -official -cmliu -tl 250 -sl 5
+cfstx -bestcf -official -cmliu -cfdomains -tl 250 -sl 5
 ```
 
-合并三个在线来源，筛出延迟 <250ms 且下载 >5MB/s 的。
+合并四个在线来源，筛出延迟 <250ms 且下载 >5MB/s 的。
+
+> 全部勾上会先花约 40~60 秒抓取（域名池要跑一遍 DoH），急着看结果就少勾几个。
 
 ### 按机房筛选（只要香港、日本、新加坡）
 
@@ -169,7 +174,7 @@ cfstx -allip -dd
 | Worker 域名专用 | `cfstx -probe 你的域名 -dd` |
 | 要速度 | `cfstx -sl 5 -dn 20` |
 | 要特定机房 | `cfstx -httping -cfcolo HKG,NRT -dd` |
-| 多来源合并 | `cfstx -bestcf -official -cmliu -dd` |
+| 多来源合并 | `cfstx -bestcf -official -cmliu -cfdomains -dd` |
 | 排查问题 | `cfstx -debug` |
 | 看版本 | `cfstx -v` |
 

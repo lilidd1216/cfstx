@@ -3,6 +3,40 @@
 > 完整版本历史。最新版本见 [Releases](https://gitee.com/liliaic/cfstx/releases)。
 
 
+### v1.2.14
+
+**新增第 8 个 IP 来源：CF 官方域名池**
+
+BestCF 维护了一份 [cf_domains.txt](https://github.com/cmliu/CF-Pages-BestCF/blob/main/cf_domains.txt)，里面是**真实托管在 Cloudflare 上的域名清单**（约 420 个）。这一版把它接进了 CFSTX。
+
+**怎么取数据：国内镜像优先**
+
+`raw.githubusercontent.com` 国内基本不通，所以按顺序尝试 5 个地址，第一个成功就停：
+
+```text
+jsDelivr → gh-proxy.com → ghfast.top → ghproxy.net → raw.githubusercontent.com
+```
+
+**怎么变成 IP：走现成的 DoH 链路**
+
+域名解析成 IP 后直接并入测速池。同时做了一层过滤——清单里约 4% 的域名已经不在 Cloudflare 上（CNAME 到了 AWS / Akamai），解析结果会被丢掉，不占测速名额。
+
+**实测数据**
+
+```text
+426 个域名 → 873 个可用 IP
+抓取 + 解析耗时约 42 秒
+```
+
+**定位是兜底，不是提速**：可用率高，但延迟一般（没有 100ms 以内的节点）。追求极致延迟还是以优选 IP 为主。
+
+**怎么用**
+
+- GUI：「IP 来源」勾「CF 官方域名池」
+- CLI：`cfstx -cfdomains`
+
+抓取结果在本次运行内缓存，重复测速不会重新请求。
+
 ### v1.2.13
 
 **「优化工具」页新增「进阶：多账号与节点池」**

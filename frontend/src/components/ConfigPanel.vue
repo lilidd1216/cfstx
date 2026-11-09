@@ -5,7 +5,7 @@ const config = defineModel('config', { type: Object, required: true })
 const props = defineProps({
   running: { type: Boolean, default: false },
 })
-const emit = defineEmits(['pick-ip-file', 'open-bestcf', 'open-cmliu', 'apply-preset'])
+const emit = defineEmits(['pick-ip-file', 'open-bestcf', 'open-cmliu', 'open-cfdomains', 'apply-preset'])
 
 const disabled = computed(() => props.running)
 
@@ -448,6 +448,29 @@ const customEnabled = computed(() => sources.value.includes('custom'))
             </div>
             <div class="hint">
               社区长期维护的 Cloudflare 网段列表，覆盖面通常比官方 API 更广。
+            </div>
+          </div>
+        </div>
+
+        <!-- BestCF CF 官方域名池 -->
+        <div class="source-item">
+          <v-checkbox
+            v-model="sources"
+            value="cfdomains"
+            :disabled="disabled"
+            density="compact"
+            hide-details
+            color="primary"
+            class="source-check"
+          />
+          <div class="source-body">
+            <div class="source-title">
+              CF 官方域名池
+              <a class="source-link" href="#" @click.prevent="emit('open-cfdomains')">CF-Pages-BestCF</a>
+            </div>
+            <div class="hint">
+              BestCF 维护的一份托管在 Cloudflare 上的真实域名清单，先在线抓取（jsDelivr 等国内镜像优先），
+              再通过 DoH 解析成 IP 参与测速。数量大、可用率高，适合做兜底。
             </div>
           </div>
         </div>

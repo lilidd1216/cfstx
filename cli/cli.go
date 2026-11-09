@@ -13,7 +13,7 @@ import (
 
 // Run 解析命令行参数并执行一次测速。
 func Run() {
-	var printVersion, bestcf, officialCIDR, cmliuCIDR bool
+	var printVersion, bestcf, officialCIDR, cmliuCIDR, cfDomains bool
 	var minDelay, maxDelay, downloadTime int
 	var maxLossRate float64
 	var probeDomain string
@@ -67,6 +67,9 @@ CFSTX ` + version.Current + `
         Cloudflare官方IP段；从 api.cloudflare.com 获取官方发布的 IPv4/IPv6 网段并展开测速；(默认 关闭)
     -cmliu
         cmliu的CF-CIDR；使用社区维护的 Cloudflare 网段列表，覆盖面通常比官方更广；(默认 关闭)
+    -cfdomains
+        CF官方域名池；抓取 BestCF 维护的托管在 Cloudflare 上的域名清单（jsDelivr 等国内镜像优先），
+        通过 DoH 解析成 IP 参与测速，数量大、可用率高，适合做兜底；(默认 关闭)
     -probe fast3.example.com
         自定义测速域名；延迟测速前先用 <域名>/cdn-cgi/trace 探测哪些 IP 真正服务该域名，
         自动剔除不适配的 IP（这类 IP 在客户端里会表现为大量连接超时）；
@@ -113,6 +116,7 @@ CFSTX ` + version.Current + `
 	flag.BoolVar(&bestcf, "bestcf", false, "从 bestcf.pages.dev 获取在线优选 IP")
 	flag.BoolVar(&officialCIDR, "official", false, "使用 Cloudflare 官方 IP 段")
 	flag.BoolVar(&cmliuCIDR, "cmliu", false, "使用 cmliu 整理的 CF-CIDR 列表")
+	flag.BoolVar(&cfDomains, "cfdomains", false, "使用 BestCF 维护的 CF 官方域名池")
 	flag.StringVar(&probeDomain, "probe", "", "自定义测速域名，只保留服务该域名的 IP")
 
 	flag.BoolVar(&utils.Debug, "debug", false, "调试输出模式")
@@ -152,7 +156,7 @@ CFSTX ` + version.Current + `
 	fmt.Printf("# CFSTX %s \n\n", version.Current)
 
 	// 在线来源
-	if bestcf || officialCIDR || cmliuCIDR {
+	if bestcf || officialCIDR || cmliuCIDR || cfDomains {
 		utils.Cyan.Println("[信息] 正在获取在线 IP 来源...")
 		targets, err := task.FetchOnlineTargets(task.FetchOptions{
 			DefaultPort:         task.TCPPort,
@@ -160,6 +164,7 @@ CFSTX ` + version.Current + `
 			IncludeBestCF:       bestcf,
 			IncludeOfficialCIDR: officialCIDR,
 			IncludeCmliuCIDR:    cmliuCIDR,
+			IncludeCFDomains:    cfDomains,
 		})
 		if err != nil {
 			utils.Yellow.Printf("[警告] 在线 IP 获取失败：%v\n", err)

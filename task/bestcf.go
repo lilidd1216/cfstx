@@ -42,6 +42,21 @@ const (
 	cmliuCIDRURL = "https://raw.githubusercontent.com/cmliu/cmliu/main/CF-CIDR.txt"
 )
 
+// cfDomainsURLs 是 BestCF 维护的「Cloudflare 官方域名」池，按顺序尝试。
+//
+// 这些域名本身托管在 Cloudflare 上，解析出来的就是 CF 边缘 IP，
+// 相当于一份「已经被别人验证过确实在 CF 上」的域名清单。
+//
+// 国内直连 raw.githubusercontent.com 基本不通，所以镜像在前、官方放最后兜底。
+// jsDelivr 偶尔会瞬时 404（CDN 缓存未命中），失败会自动换下一个。
+var cfDomainsURLs = []string{
+	"https://cdn.jsdelivr.net/gh/cmliu/CF-Pages-BestCF@main/cf_domains.txt",
+	"https://gh-proxy.com/https://raw.githubusercontent.com/cmliu/CF-Pages-BestCF/main/cf_domains.txt",
+	"https://ghfast.top/https://raw.githubusercontent.com/cmliu/CF-Pages-BestCF/main/cf_domains.txt",
+	"https://ghproxy.net/https://raw.githubusercontent.com/cmliu/CF-Pages-BestCF/main/cf_domains.txt",
+	"https://raw.githubusercontent.com/cmliu/CF-Pages-BestCF/main/cf_domains.txt",
+}
+
 var (
 	linkRe   = regexp.MustCompile(`(?is)<span class="url-text"[^>]*>(.*?)</span>`)
 	tagRe    = regexp.MustCompile(`(?s)<[^>]+>`)
@@ -55,6 +70,7 @@ type FetchOptions struct {
 	IncludeBestCF       bool     // 是否抓取 bestcf.pages.dev「优选IP BestIP」区块
 	IncludeOfficialCIDR bool     // 是否抓取 Cloudflare 官方 IP 段
 	IncludeCmliuCIDR    bool     // 是否抓取 cmliu 整理的 CF CIDR
+	IncludeCFDomains    bool     // 是否抓取 BestCF 维护的 CF 官方域名池
 	CustomSources       []string // 用户自定义的 IP 列表 URL
 	OnProgress          func(done, total int, msg string)
 }
@@ -434,7 +450,7 @@ func FetchOnlineTargets(opts FetchOptions) ([]*Target, error) {
 		opts.DefaultPort = 443
 	}
 	if !opts.IncludeBestCF && !opts.IncludeOfficialCIDR && !opts.IncludeCmliuCIDR &&
-		len(opts.CustomSources) == 0 {
+		!opts.IncludeCFDomains && len(opts.CustomSources) == 0 {
 		return nil, nil
 	}
 
@@ -452,8 +468,9 @@ func FetchOnlineTargets(opts FetchOptions) ([]*Target, error) {
 		report(0, 0, "正在读取 bestcf.pages.dev 首页…")
 		home, err := client.get(BestCFHome)
 		if err != nil {
-			// 只要还有其他来源（自定义源 / CIDR），就不因为单个站点失败而中断
-			if len(opts.CustomSources) == 0 && !opts.IncludeOfficialCIDR && !opts.IncludeCmliuCIDR {
+			// 只要还有其他来源（自定义源 / CIDR / 域名池），就不因为单个站点失败而中断
+			if len(opts.CustomSources) == 0 && !opts.IncludeOfficialCIDR &&
+				!opts.IncludeCmliuCIDR && !opts.IncludeCFDomains {
 				return nil, fmt.Errorf("读取 bestcf.pages.dev 失败：%w", err)
 			}
 			report(0, 0, "bestcf.pages.dev 读取失败，继续抓取其他来源")
@@ -469,8 +486,34 @@ func FetchOnlineTargets(opts FetchOptions) ([]*Target, error) {
 	if len(links) > 0 {
 		report(0, len(links), fmt.Sprintf("共 %d 个列表地址，开始并发抓取…", len(links)))
 		bodies = fetchAll(client, links, report)
-	} else if !opts.IncludeOfficialCIDR && !opts.IncludeCmliuCIDR {
+	} else if !opts.IncludeOfficialCIDR && !opts.IncludeCmliuCIDR && !opts.IncludeCFDomains {
 		return nil, fmt.Errorf("没有可抓取的 IP 列表地址")
+	}
+
+	// CF 官方域名池：内容就是一份域名列表，抓到后和普通列表一样按行解析，
+	// 域名走 DoH 解析成 IP。只取第一个成功的镜像，避免重复抓 5 份相同内容。
+	//
+	// 单独存一份而不是直接塞进 bodies：这份清单里有约 4% 的域名已经不在
+	// Cloudflare 上（CNAME 到了 AWS / Akamai），解析出来的 IP 测了也白测，
+	// 后面会对这个池子单独做「只在 CF 网段内」的过滤。
+	var cfDomainsBody string
+	if opts.IncludeCFDomains {
+		report(0, 0, "正在读取 CF 官方域名池…")
+		for _, u := range cfDomainsURLs {
+			if cancelled() {
+				return nil, ErrCancelled
+			}
+			body, err := client.get(u)
+			if err == nil && strings.TrimSpace(body) != "" {
+				cfDomainsBody = body
+				break
+			}
+		}
+		if cfDomainsBody != "" {
+			report(0, 0, "CF 官方域名池读取成功")
+		} else {
+			report(0, 0, "CF 官方域名池读取失败，已跳过")
+		}
 	}
 
 	if cancelled() {
@@ -516,11 +559,37 @@ func FetchOnlineTargets(opts FetchOptions) ([]*Target, error) {
 		}
 	}
 
+	// 域名池里的域名单独记账：同一个域名也可能出现在别的来源里，
+	// 只有来自这个池子的解析结果才做 CF 网段过滤。
+	cfPoolHosts := make(map[string]bool, 512)
+	if cfDomainsBody != "" {
+		for _, line := range strings.Split(cfDomainsBody, "\n") {
+			host, port, ok := parseSourceLine(line, opts.DefaultPort)
+			if !ok {
+				continue
+			}
+			if ip := net.ParseIP(host); ip != nil {
+				if IsCloudflareOwnedIP(ip) {
+					addIP(ip, port)
+				}
+			} else if isDomainName(host) {
+				if old, exists := domains[host]; !exists || portRank(port) < portRank(old) {
+					domains[host] = port
+				}
+				cfPoolHosts[host] = true
+			}
+		}
+	}
+
 	if len(domains) > 0 {
 		report(0, len(domains), fmt.Sprintf("发现 %d 个域名，正在通过 DoH 解析…", len(domains)))
 		resolved := resolveDomains(client, domains, opts.AllowIPv6, report)
 		for host, port := range domains {
 			for _, ip := range resolved[host] {
+				// 域名池里那些已经不在 CF 上的域名，解析结果直接丢掉
+				if cfPoolHosts[host] && !IsCloudflareOwnedIP(ip) {
+					continue
+				}
 				addIP(ip, port)
 			}
 		}

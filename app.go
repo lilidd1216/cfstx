@@ -27,13 +27,14 @@ const defaultTestURL = "https://speed.cloudflare.com/__down?bytes=90000000"
 
 // IP 来源标识
 const (
-	sourceIPv4     = "ipv4"     // 内置 ip.txt（可替换为自定义文件）
-	sourceIPv6     = "ipv6"     // 内置 ipv6.txt
-	sourceBestCF   = "bestcf"   // 在线优选 IP（bestcf.pages.dev）
-	sourceOfficial = "official" // Cloudflare 官方 IP 段 API
-	sourceCmliu    = "cmliu"    // cmliu 整理的 CF-CIDR 列表
-	sourceCustom   = "custom"   // 用户自定义的在线 IP 列表 URL
-	sourceManual   = "manual"   // 手动输入的 IP 段
+	sourceIPv4      = "ipv4"      // 内置 ip.txt（可替换为自定义文件）
+	sourceIPv6      = "ipv6"      // 内置 ipv6.txt
+	sourceBestCF    = "bestcf"    // 在线优选 IP（bestcf.pages.dev）
+	sourceOfficial  = "official"  // Cloudflare 官方 IP 段 API
+	sourceCmliu     = "cmliu"     // cmliu 整理的 CF-CIDR 列表
+	sourceCFDomains = "cfdomains" // BestCF 维护的 CF 官方域名池
+	sourceCustom    = "custom"    // 用户自定义的在线 IP 列表 URL
+	sourceManual    = "manual"    // 手动输入的 IP 段
 )
 
 // Config 是界面上可调整的全部测速参数。
@@ -248,8 +249,8 @@ func normalizeConfig(cfg Config) Config {
 	// 至少要保留一个 IP 来源，否则测速会没有任何目标
 	if !hasSource(cfg.Sources, sourceIPv4) && !hasSource(cfg.Sources, sourceIPv6) &&
 		!hasSource(cfg.Sources, sourceBestCF) && !hasSource(cfg.Sources, sourceOfficial) &&
-		!hasSource(cfg.Sources, sourceCmliu) && !hasSource(cfg.Sources, sourceCustom) &&
-		!hasSource(cfg.Sources, sourceManual) {
+		!hasSource(cfg.Sources, sourceCmliu) && !hasSource(cfg.Sources, sourceCFDomains) &&
+		!hasSource(cfg.Sources, sourceCustom) && !hasSource(cfg.Sources, sourceManual) {
 		cfg.Sources = append(cfg.Sources, sourceIPv4)
 	}
 	if cfg.IPFile == "" {
@@ -299,9 +300,10 @@ func hasSource(sources []string, name string) bool {
 
 // onlineCacheKey 由抓取参数生成缓存键，参数变化时自动失效。
 func onlineCacheKey(opts task.FetchOptions) string {
-	return fmt.Sprintf("%t|%t|%t|%d|%t|%s",
+	return fmt.Sprintf("%t|%t|%t|%t|%d|%t|%s",
 		opts.IncludeBestCF, opts.IncludeOfficialCIDR, opts.IncludeCmliuCIDR,
-		opts.DefaultPort, opts.AllowIPv6, strings.Join(opts.CustomSources, ","))
+		opts.IncludeCFDomains, opts.DefaultPort, opts.AllowIPv6,
+		strings.Join(opts.CustomSources, ","))
 }
 
 // splitSourceLines 把多行文本拆成 URL 列表，忽略空行与注释。
@@ -435,13 +437,15 @@ func (a *App) runTest(cfg Config) {
 
 	// 勾选了在线来源时：本次启动首次抓取并缓存，之后的测速直接复用
 	if hasSource(cfg.Sources, sourceBestCF) || hasSource(cfg.Sources, sourceOfficial) ||
-		hasSource(cfg.Sources, sourceCmliu) || hasSource(cfg.Sources, sourceCustom) {
+		hasSource(cfg.Sources, sourceCmliu) || hasSource(cfg.Sources, sourceCFDomains) ||
+		hasSource(cfg.Sources, sourceCustom) {
 		opts := task.FetchOptions{
 			DefaultPort:         cfg.Port,
 			AllowIPv6:           hasSource(cfg.Sources, sourceIPv6),
 			IncludeBestCF:       hasSource(cfg.Sources, sourceBestCF),
 			IncludeOfficialCIDR: hasSource(cfg.Sources, sourceOfficial),
 			IncludeCmliuCIDR:    hasSource(cfg.Sources, sourceCmliu),
+			IncludeCFDomains:    hasSource(cfg.Sources, sourceCFDomains),
 			CustomSources:       splitSourceLines(cfg.CustomSources),
 			OnProgress: func(done, total int, msg string) {
 				task.ProgressHook(task.ProgressEvent{

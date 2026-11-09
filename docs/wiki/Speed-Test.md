@@ -31,7 +31,7 @@
 
 ---
 
-## 七种 IP 来源
+## 八种 IP 来源
 
 在「IP 来源」区域勾选，可多选，**全部合并后按 IP 去重**。
 
@@ -42,8 +42,25 @@
 | **优选IP BestIP** | 抓取 bestcf.pages.dev 的「优选IP BestIP」区块，排除 GitHub 链接 | ~1200 | 是 |
 | **Cloudflare 官方 IP 段** | `api.cloudflare.com/client/v4/ips` 实时网段 | 数百 | 是 |
 | **cmliu CF-CIDR** | 社区维护的补充网段，覆盖面通常比官方更广 | 数百 | 是 |
+| **CF 官方域名池** | BestCF 维护的真实 CF 域名清单，DoH 解析成 IP，只保留 CF 网段的 | ~870 | 是 |
 | **自定义 IP 源** | 自己填任意列表 URL，每行一个 | 自定 | 是 |
 | **手动指定 IP 段** | 直接输入 `IP`、`CIDR` 或 `IP:端口`，英文逗号分隔 | 自定 | 否 |
+
+### CF 官方域名池是什么
+
+来自 [cmliu/CF-Pages-BestCF](https://github.com/cmliu/CF-Pages-BestCF) 的 `cf_domains.txt`，是一份**真实托管在 Cloudflare 上的域名清单**（约 420 个）。
+
+抓取时会按顺序尝试国内可用的镜像：
+
+```text
+jsDelivr → gh-proxy.com → ghfast.top → ghproxy.net → raw.githubusercontent.com
+```
+
+拿到域名后通过 DoH 解析成 IP。其中约 4% 的域名已经不在 Cloudflare 上（CNAME 到了 AWS / Akamai），解析结果会被**过滤掉**，不占用测速名额。
+
+**定位**：数量大、可用率高（实测 426 个域名 → 873 个 IP），但**延迟一般**，适合当兜底，不适合追求极致延迟。
+
+> 完整抓取约 40 秒，之后本次运行内复用缓存。
 
 ### 去重与端口优先级
 

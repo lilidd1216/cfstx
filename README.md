@@ -29,7 +29,7 @@ CFSTX 把这件事自动化：**批量测速 → 按你的条件过滤 → 给�
 
 | 能力 | 一句话说明 | 详解 |
 |---|---|---|
-| **七种 IP 来源** | 内置列表、官方网段、社区列表、自建源可任意组合，去重后最多 1.3 万目标 | [优选IP](https://gitee.com/liliaic/cfstx/wiki/Speed-Test) |
+| **八种 IP 来源** | 内置列表、官方网段、社区列表、CF 域名池、自建源可任意组合，去重后最多 1.3 万目标 | [优选IP](https://gitee.com/liliaic/cfstx/wiki/Speed-Test) |
 | **自定义测速域名** | 只保留真正服务你 Worker / Pages 域名的 IP | [优选IP](https://gitee.com/liliaic/cfstx/wiki/Speed-Test) |
 | **ProxyIP 优选** | 检测哪些第三方服务器真的能作反代中继，并区分「真中转」与「直连入口」 | [ProxyIP](https://gitee.com/liliaic/cfstx/wiki/ProxyIP) |
 | **综合评分** | 速度 + 延迟 + 丢包加权，前 3 名标「推荐」 | [优选IP](https://gitee.com/liliaic/cfstx/wiki/Speed-Test) |
@@ -86,7 +86,7 @@ CFSTX 把这件事自动化：**批量测速 → 按你的条件过滤 → 给�
 给它一批候选地址，它还你一份按评分排序、可直接填进客户端的列表。
 
 ```text
-IP 来源（七选一或多个） → 延迟测速 → [域名探测] → 过滤 → 下载测速 → 结果
+IP 来源（八选一或多个） → 延迟测速 → [域名探测] → 过滤 → 下载测速 → 结果
 ```
 
 - **场景预设**：新手推荐 / Worker 专用 / 极速扫描，一键套用
