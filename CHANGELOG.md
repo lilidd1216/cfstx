@@ -3,6 +3,39 @@
 > 完整版本历史。最新版本见 [Releases](https://gitee.com/liliaic/cfstx/releases)。
 
 
+### v1.2.18
+
+**Clash 配置生成器新增「域名嗅探」，默认开启**
+
+mihomo 默认使用 Fake-IP 模式。普通 TCP 网页流量靠内部的 fake-ip → 域名映射就能命中规则，但有两类流量拿不到域名：
+
+- **QUIC / UDP**（YouTube、Google 大量使用）
+- **应用直接连 IP**（不做 DNS 解析）
+
+这两类只能按 IP 匹配规则，容易分流到错误的分组。开启 sniffer 后，mihomo 会从 TLS SNI / HTTP Host / QUIC ServerName 里把域名嗅出来。
+
+生成的配置：
+
+```javascript
+config.sniffer = {
+  enable: true,
+  'force-dns-mapping': true,
+  'parse-pure-ip': true,
+  sniff: {
+    HTTP: { ports: ['80', '8080-8880'], 'override-destination': true },
+    TLS:  { ports: ['443', '8443'],       'override-destination': true },
+    QUIC: { ports: ['443'] },
+  },
+  'skip-domain': ['Mijia Cloud', 'dlg.io.mi.com', '+.push.apple.com'],
+}
+```
+
+`override-destination: true` 是关键——它让嗅探出的域名真正参与路由决策，否则嗅探结果只记录不使用。
+
+`skip-domain` 排除了三个走了会出问题的：小米设备的局域网发现、Apple 推送。如果你有其它设备出现异常，往这个列表里加即可。
+
+生成器现在一共 5 个开关，域名嗅探是唯一默认开启的（属于修复性质，不是可选优化）。
+
 ### v1.2.17
 
 **Clash 配置生成器扩到 4 个开关**

@@ -272,6 +272,9 @@ const unifyDelay = ref(false)
 const tcpConcurrent = ref(false)
 // 把 fallback 里的明文 DNS 换成 DoH
 const dnsOptimize = ref(false)
+// 域名嗅探：Fake-IP 下 QUIC / 纯 IP 流量靠它才能命中域名规则。
+// 属于「修复」性质，默认开启。
+const sniffEnabled = ref(true)
 
 function openClashDialog() {
   // 有稳定节点时默认勾上过滤，否则保持关闭
@@ -370,6 +373,30 @@ const clashScript = computed(() => {
     p.push("      'https://8.8.8.8/dns-query',")
     p.push("      'https://1.1.1.1/dns-query',")
     p.push('    ]')
+    p.push('  }')
+  }
+
+  // ---- 6) 域名嗅探 ----
+  if (sniffEnabled.value) {
+    p.push('')
+    p.push(next() + '域名嗅探：Fake-IP 模式下让 QUIC / 纯 IP 流量也能命中域名规则')
+    p.push('  // 不开的话，YouTube / Google 这类走 QUIC 的流量拿不到域名，')
+    p.push('  // 规则只能按 IP 匹配，容易分流到错误的分组')
+    p.push('  config.sniffer = {')
+    p.push('    enable: true,')
+    p.push("    'force-dns-mapping': true,")
+    p.push("    'parse-pure-ip': true,")
+    p.push('    sniff: {')
+    p.push("      HTTP: { ports: ['80', '8080-8880'], 'override-destination': true },")
+    p.push("      TLS:  { ports: ['443', '8443'], 'override-destination': true },")
+    p.push("      QUIC: { ports: ['443'] },")
+    p.push('    },')
+    p.push('    // 这几个走了会出问题（局域网设备发现、推送），跳过嗅探')
+    p.push("    'skip-domain': [")
+    p.push("      'Mijia Cloud',")
+    p.push("      'dlg.io.mi.com',")
+    p.push("      '+.push.apple.com',")
+    p.push('    ],')
     p.push('  }')
   }
 
@@ -735,12 +762,26 @@ async function copyClashScript() {
             color="primary"
             density="compact"
             hide-details
-            class="mb-3"
           >
             <template #label>
               <span class="text-body-2">DNS 兜底换 DoH</span>
               <span class="text-caption text-medium-emphasis ml-2">
                 fallback 的明文 DNS 可能被污染
+              </span>
+            </template>
+          </v-switch>
+
+          <v-switch
+            v-model="sniffEnabled"
+            color="primary"
+            density="compact"
+            hide-details
+            class="mb-3"
+          >
+            <template #label>
+              <span class="text-body-2">域名嗅探</span>
+              <span class="text-caption text-medium-emphasis ml-2">
+                Fake-IP 下 QUIC 流量靠它命中域名规则
               </span>
             </template>
           </v-switch>
