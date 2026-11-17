@@ -39,6 +39,10 @@ const running = ref(false)
 const phase = ref('idle') // idle | fetch | ping | download | done
 const progress = ref({ current: 0, total: 0, available: 0, ip: '', port: 0, speed: 0, msg: '' })
 const results = ref([])
+// 稳定性测试：结果按 IP 增量追加，主表格通过 ip:port 关联
+const stabilityResults = ref([])
+const stabilityRunning = ref(false)
+const stabilityProgress = ref({ done: 0, total: 0 })
 const history = ref([])
 const historyOpen = ref(false)
 const snackbar = ref({ show: false, text: '', color: 'success' })
@@ -317,6 +321,8 @@ function startAnyway() {
 async function doStart() {
   running.value = true
   results.value = []
+  // 换了 IP 池，旧的稳定性结论就作废了
+  stabilityResults.value = []
   phase.value = 'ping'
   progress.value = { current: 0, total: 0, available: 0, ip: '', port: 0, speed: 0, msg: '' }
   startTimer()
@@ -334,6 +340,42 @@ async function stop() {
   try {
     await httpPost('/api/test/stop')
     toast('已请求停止测速', 'info')
+  } catch (e) {
+    toast(String(e), 'error')
+  }
+}
+
+// 稳定性测试：结果由 SSE 逐条推送，这里只负责发起和停止
+async function startStability(payload) {
+  if (!results.value.length) {
+    toast('还没有测速结果，请先完成一次测速', 'warning')
+    return
+  }
+  if (running.value) {
+    toast('主测速正在进行中，请等它结束', 'warning')
+    return
+  }
+  stabilityResults.value = []
+  stabilityRunning.value = true
+  stabilityProgress.value = { done: 0, total: results.value.length }
+  try {
+    await httpPost('/api/stability/start', {
+      targets: [], // 空表示测试当前全部结果
+      rounds: payload.rounds,
+      concurrency: payload.concurrency,
+      keepAlive: payload.keepAlive,
+      domain: payload.domain || config.value.probeDomain || '',
+    })
+  } catch (e) {
+    toast(String(e), 'error')
+    stabilityRunning.value = false
+  }
+}
+
+async function stopStability() {
+  try {
+    await httpPost('/api/stability/stop')
+    toast('已请求停止稳定性测试', 'info')
   } catch (e) {
     toast(String(e), 'error')
   }
@@ -559,6 +601,30 @@ function handleEvent(event, data) {
       }
       break
 
+    // ---- 稳定性测试 ----
+    case 'stability:start':
+      stabilityRunning.value = true
+      stabilityResults.value = []
+      stabilityProgress.value = { done: 0, total: data?.total || 0 }
+      break
+
+    case 'stability:result':
+      if (data?.result) {
+        stabilityResults.value = [...stabilityResults.value, data.result]
+      }
+      stabilityProgress.value = { done: data?.done || 0, total: data?.total || 0 }
+      break
+
+    case 'stability:done': {
+      stabilityRunning.value = false
+      const good = stabilityResults.value.filter((r) => r.score === 'S' || r.score === 'A').length
+      toast(
+        `稳定性测试完成：${good} 个 S/A 级（共 ${stabilityResults.value.length} 个）`,
+        good > 0 ? 'success' : 'warning'
+      )
+      break
+    }
+
     case 'update:progress':
       downloadProgress.value = data?.percent || 0
       break
@@ -640,6 +706,20 @@ async function restoreRunState() {
     } else if (rs.length) {
       results.value = rs
       phase.value = 'done'
+    }
+  } catch (_) { /* 忽略 */ }
+
+  // 稳定性结果同理：跑了几分钟后刷新页面不该丢
+  try {
+    const st = await httpGet('/api/stability/status')
+    const list = st?.results || []
+    if (list.length) {
+      stabilityResults.value = list
+      stabilityProgress.value = {
+        done: st.done || list.length,
+        total: st.total || list.length,
+      }
+      stabilityRunning.value = !!st.running
     }
   } catch (_) { /* 忽略 */ }
 }
@@ -877,9 +957,15 @@ onBeforeUnmount(() => {
           :results="displayResults"
           :total="results.length"
           :loading="running"
+          :stability="stabilityResults"
+          :stability-running="stabilityRunning"
+          :stability-progress="stabilityProgress"
+          :default-domain="config.probeDomain"
           @export="exportCsv"
           @export-txt="exportTxt"
           @copied="handleCopied"
+          @test-stability="startStability"
+          @stop-stability="stopStability"
         />
         </template>
 

@@ -11,6 +11,33 @@ import (
 	webview2 "github.com/jchv/go-webview2"
 )
 
+// runServe 只启动本地 HTTP 服务，不创建 WebView2 窗口。
+//
+// 用途：在没有交互式桌面会话的环境（远程调试、CI、自动化测试）里
+// 用浏览器访问同一套界面。绑定的始终是 127.0.0.1，不对外暴露。
+func runServe(assets embed.FS) error {
+	app := NewApp()
+	hub := NewEventHub()
+	app.SetHub(hub)
+	api := NewAPI(app, hub, assets)
+
+	addr := os.Getenv("CFSTX_ADDR")
+	if addr == "" {
+		addr = "127.0.0.1:18080"
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		// 端口被占用或落在 Windows 保留区间时，退回随机端口。
+		// 实际监听地址会打印出来，调试时照抄即可。
+		ln, err = net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return err
+		}
+	}
+	fmt.Printf("CFSTX 服务已启动：http://%s\n", ln.Addr().String())
+	return http.Serve(ln, api.Routes())
+}
+
 // runGUI 启动本地 HTTP 服务并用 WebView2 窗口加载前端。
 //
 // 不使用 Wails：Wails 2.17.1 在 Windows 11 build 26200 上创建 WebView2

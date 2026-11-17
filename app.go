@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -177,6 +178,13 @@ type App struct {
 	proxyDomain  string
 	proxyLocalIP string // 本机公网出口，用于判定直连；空表示取不到
 	proxyResults []task.ProxyIPResult
+
+	// 稳定性测试的独立状态，同样不占用主测速状态
+	stabMu      sync.Mutex
+	stabRunning bool
+	stabDone    int
+	stabTotal   int
+	stabResults []task.StabilityResult
 }
 
 // appendLog 追加一条运行日志（最多保留最近 5000 条）。
@@ -337,6 +345,16 @@ func (a *App) ResetConfig() Config {
 
 // StartTest 启动一次测速。进度通过 test:* 事件推送。
 func (a *App) StartTest(cfg Config) error {
+	// 稳定性测试和主测速互斥：两者都会打满并发连接，
+	// 同时跑会互相干扰，测出来的数字都没意义。
+	// 锁顺序固定为 stabMu → mu，避免与 StartStability 交叉加锁死锁。
+	a.stabMu.Lock()
+	stabBusy := a.stabRunning
+	a.stabMu.Unlock()
+	if stabBusy {
+		return fmt.Errorf("稳定性测试正在进行中，请先停止")
+	}
+
 	a.mu.Lock()
 	if a.running {
 		a.mu.Unlock()
@@ -370,6 +388,185 @@ func (a *App) Status() Status {
 		Progress: a.progress,
 		Results:  a.resultsOrEmpty(),
 	}
+}
+
+// StabilityRequest 是前端发起的稳定性测试请求。
+type StabilityRequest struct {
+	Targets     []string `json:"targets"`     // "ip:port" 列表，为空表示测试当前全部结果
+	Rounds      int      `json:"rounds"`      // 每个 IP 的采样轮数
+	Concurrency int      `json:"concurrency"` // 并发测试的 IP 数量
+	KeepAlive   bool     `json:"keepAlive"`   // 是否额外做长连接保活探测
+	Domain      string   `json:"domain"`      // 测试目标域名，通常填自己的 Worker 域名
+}
+
+// StabilityStatus 是稳定性测试的状态快照。
+type StabilityStatus struct {
+	Running bool                   `json:"running"`
+	Done    int                    `json:"done"`
+	Total   int                    `json:"total"`
+	Results []task.StabilityResult `json:"results"`
+}
+
+// StartStability 启动稳定性测试。
+//
+// 为什么需要独立于主测速：主测速只测一次「能不能连上」，
+// 而用户真正关心的是「连上之后会不会断」。稳定性测试用多轮采样
+// 把 TCP / TLS 分开计时，并统计成功率与抖动。
+func (a *App) StartStability(req StabilityRequest) error {
+	// 锁顺序：stabMu → mu（与 StartTest 保持一致）
+	a.stabMu.Lock()
+	if a.stabRunning {
+		a.stabMu.Unlock()
+		return fmt.Errorf("稳定性测试正在进行中，请先停止")
+	}
+	a.mu.Lock()
+	busy := a.running
+	a.mu.Unlock()
+	if busy {
+		a.stabMu.Unlock()
+		return fmt.Errorf("主测速正在进行中，请等它结束后再测稳定性")
+	}
+
+	targets := a.stabilityTargets(req.Targets)
+	if len(targets) == 0 {
+		a.stabMu.Unlock()
+		// 区分「一次测速都没跑」和「传进来的 IP 全解析失败」，
+		// 否则用户看到「请先完成一次测速」会莫名其妙
+		if len(req.Targets) > 0 {
+			return fmt.Errorf("传入的 %d 个 IP 都无法解析，请检查格式", len(req.Targets))
+		}
+		return fmt.Errorf("没有可测试的 IP，请先完成一次测速")
+	}
+
+	domain := strings.TrimSpace(req.Domain)
+	if domain == "" {
+		domain = a.savedProbeDomain()
+	}
+
+	a.stabRunning = true
+	a.stabDone = 0
+	a.stabTotal = len(targets)
+	a.stabResults = nil
+	a.stabMu.Unlock()
+
+	task.StabilityDomain = task.NormalizeProbeDomain(domain)
+	task.ResetCancel()
+
+	cfg := task.StabilityConfig{
+		Rounds:      req.Rounds,
+		Concurrency: req.Concurrency,
+		KeepAlive:   req.KeepAlive,
+	}
+
+	target := task.StabilityDomain
+	if target == "" {
+		target = "默认测速端点"
+	}
+	a.appendLog("info", "stability", fmt.Sprintf("开始稳定性测试：%d 个 IP，目标 %s", len(targets), target))
+	a.emit("stability:start", map[string]any{"total": len(targets)})
+
+	go func() {
+		defer func() {
+			a.stabMu.Lock()
+			done := a.stabDone
+			a.stabRunning = false
+			// 回调是完成顺序，这里排一次，让页面刷新后恢复的顺序也稳定
+			task.SortStabilityResults(a.stabResults)
+			a.stabMu.Unlock()
+			a.emit("stability:done", map[string]any{"total": len(targets), "done": done})
+			a.appendLog("info", "stability", fmt.Sprintf("稳定性测试结束：%d/%d", done, len(targets)))
+		}()
+
+		task.TestStability(targets, cfg, func(r *task.StabilityResult) {
+			a.stabMu.Lock()
+			a.stabDone++
+			a.stabResults = append(a.stabResults, *r)
+			done := a.stabDone
+			a.stabMu.Unlock()
+			a.emit("stability:result", map[string]any{
+				"done":   done,
+				"total":  len(targets),
+				"result": r,
+			})
+		})
+	}()
+	return nil
+}
+
+// StopStability 请求停止稳定性测试。
+func (a *App) StopStability() {
+	task.Cancel()
+}
+
+// StabilityStatus 返回稳定性测试状态快照。
+func (a *App) StabilityStatus() StabilityStatus {
+	a.stabMu.Lock()
+	defer a.stabMu.Unlock()
+	rs := a.stabResults
+	if rs == nil {
+		rs = []task.StabilityResult{}
+	}
+	return StabilityStatus{
+		Running: a.stabRunning,
+		Done:    a.stabDone,
+		Total:   a.stabTotal,
+		Results: rs,
+	}
+}
+
+// stabilityTargets 把前端传来的 "ip:port" 列表解析成 Target。
+// 列表为空时取当前测速结果，方便「一键测全部」。
+func (a *App) stabilityTargets(list []string) []*task.Target {
+	if len(list) == 0 {
+		a.mu.Lock()
+		items := a.resultsOrEmpty()
+		a.mu.Unlock()
+		list = make([]string, 0, len(items))
+		for _, it := range items {
+			list = append(list, net.JoinHostPort(it.IP, strconv.Itoa(it.Port)))
+		}
+	}
+
+	out := make([]*task.Target, 0, len(list))
+	seen := make(map[string]struct{}, len(list))
+	for _, s := range list {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		host, portStr := s, "443"
+		if h, p, err := net.SplitHostPort(s); err == nil {
+			host, portStr = h, p
+		}
+		ip := net.ParseIP(strings.Trim(host, "[]"))
+		if ip == nil {
+			continue
+		}
+		port, err := strconv.Atoi(portStr)
+		if err != nil || port <= 0 || port > 65535 {
+			port = 443
+		}
+		key := net.JoinHostPort(ip.String(), strconv.Itoa(port))
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, &task.Target{IP: &net.IPAddr{IP: ip}, Port: port})
+	}
+	return out
+}
+
+// savedProbeDomain 从已保存的配置里读取探测域名，作为稳定性测试的兜底目标。
+func (a *App) savedProbeDomain() string {
+	data, err := os.ReadFile(a.configPath())
+	if err != nil {
+		return ""
+	}
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return ""
+	}
+	return cfg.ProbeDomain
 }
 
 func (a *App) resultsOrEmpty() []ResultItem {

@@ -148,6 +148,25 @@ func (a *API) handleAPI(w http.ResponseWriter, r *http.Request) {
 	case path == "/api/test/status" && r.Method == http.MethodGet:
 		writeJSON(w, a.app.Status())
 
+	case path == "/api/stability/start" && r.Method == http.MethodPost:
+		var req StabilityRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := a.app.StartStability(req); err != nil {
+			writeError(w, http.StatusConflict, err)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+
+	case path == "/api/stability/stop" && r.Method == http.MethodPost:
+		a.app.StopStability()
+		writeJSON(w, map[string]bool{"ok": true})
+
+	case path == "/api/stability/status" && r.Method == http.MethodGet:
+		writeJSON(w, a.app.StabilityStatus())
+
 	case path == "/api/results" && r.Method == http.MethodGet:
 		writeJSON(w, a.app.GetResults())
 
