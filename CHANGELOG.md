@@ -3,6 +3,38 @@
 > 完整版本历史。最新版本见 [Releases](https://gitee.com/liliaic/cfstx/releases)。
 
 
+### v1.2.17
+
+**Clash 配置生成器扩到 4 个开关**
+
+v1.2.16 只能改策略组参数和过滤节点，这一版把常用的内核优化也接进来，一次复制全搞定。
+
+| 开关 | 作用 |
+|---|---|
+| 只保留稳定节点 | 按 IP 过滤掉不稳定节点，同步清理策略组引用 |
+| **统一延迟口径** | `unified-delay: true` + 自动把测试地址从 `http://` 改 `https://` |
+| **TCP 并发** | `tcp-concurrent: true`，同一域名多个 IP 并行握手取最快 |
+| **DNS 兜底换 DoH** | `fallback` 里的明文 DNS 换成 `https://8.8.8.8/dns-query` |
+
+**统一延迟有两个前提，生成器会自动处理**
+
+mihomo 的实现是：先发一次请求完成握手，**再复用同一连接发第二次，用第二次的 RTT 作为延迟**。
+
+所以：
+
+1. **测试地址必须是 `https://`**。源码里第二次请求失败会退回含握手的延迟（等于没开），并打印 `It is recommended to use HTTPS`。生成器会自动把 `proxy-groups` 里的 `http://` 改掉。
+2. **必须先用稳定性测试筛掉 TLS 慢的节点**。否则 `unified-delay` 会把握手成本藏起来，让 `url-test` 选到「RTT 低、但首次打开要等几秒」的节点。所以这个开关默认关闭，勾选时会有黄色提示。
+
+**顺带澄清一个常见误解**
+
+网上有些说法称 `fallback` / `fallback-filter` 已废弃。查官方文档后确认：**只有 `fallback-filter.geosite` 这一个子字段废弃**，`fallback` 整体仍然有效，官方示例配置本身就是 `nameserver` + `fallback` + `fallback-filter` + `nameserver-policy` 一起用。
+
+如果你现在的配置里 `fallback-filter` 用的是 `geoip` / `ipcidr` / `domain`，那是合法的，不用改。
+
+**关于 tcp-concurrent**
+
+它是对「DNS 解析出多个 IP」的场景并行握手。你的节点 `server` 是固定 IP，所以**对节点出口无效**，但对手动访问的普通网站有效。
+
 ### v1.2.16
 
 **测完稳定性之后，直接拿去用**

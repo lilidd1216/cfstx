@@ -265,9 +265,16 @@ async function copyAs(format) {
 const clashDialog = ref(false)
 // 是否在脚本里按 IP 过滤掉不稳定节点（默认关闭，属于「激进」选项）
 const filterStableOnly = ref(false)
+// 统一延迟口径：排除握手耗时，让 url-test 比较真实 RTT。
+// 默认关闭——它会把「握手慢」的成本藏起来，节点 TLS 还没达标时开反而有害。
+const unifyDelay = ref(false)
+// TCP 并发：对「DNS 解析出多个 IP」的网页访问有效，对固定 IP 的节点无效
+const tcpConcurrent = ref(false)
+// 把 fallback 里的明文 DNS 换成 DoH
+const dnsOptimize = ref(false)
 
 function openClashDialog() {
-  // 有 S/A 级节点时默认勾上过滤，否则保持关闭
+  // 有稳定节点时默认勾上过滤，否则保持关闭
   filterStableOnly.value = stableList.value.length > 0
   clashDialog.value = true
 }
@@ -279,13 +286,21 @@ function openClashDialog() {
 // 既不需要节点名，也能让 url-test 不再被烂节点污染。
 const clashScript = computed(() => {
   const p = []
+  let step = 0
+  const next = () => {
+    step++
+    return `  // ${step}) `
+  }
+
   p.push('// 由 CFSTX 生成于 ' + new Date().toLocaleString('zh-CN'))
   p.push('// 用法：Clash Verge → 订阅 → 右键 → 编辑脚本（Script）→ 粘贴 → 保存 → 重新应用订阅')
   p.push('')
   p.push('function main(config, profileName) {')
   p.push("  const groups = config['proxy-groups'] || []")
   p.push('')
-  p.push('  // 1) 策略组参数优化')
+
+  // ---- 1) 策略组参数 ----
+  p.push(next() + '策略组参数优化')
   p.push("  const auto = groups.find((g) => g.type === 'url-test')")
   p.push('  if (auto) {')
   p.push('    auto.interval = 120    // 5 分钟 → 2 分钟，更早发现节点挂掉')
@@ -298,9 +313,10 @@ const clashScript = computed(() => {
   p.push('    fb.lazy = false')
   p.push('  }')
 
+  // ---- 2) 按 IP 过滤节点 ----
   if (filterStableOnly.value && stableList.value.length) {
     p.push('')
-    p.push('  // 2) 只保留稳定性达标的节点（B 级以上）')
+    p.push(next() + '只保留稳定性达标的节点（B 级以上）')
     p.push('  const stableIPs = new Set([')
     for (const r of stableList.value) {
       p.push(`    '${r.ip}',`)
@@ -320,6 +336,40 @@ const clashScript = computed(() => {
     p.push('        g.proxies = g.proxies.filter((n) => !removed.has(n))')
     p.push('      }')
     p.push('    }')
+    p.push('  }')
+  }
+
+  // ---- 3) 统一延迟口径 ----
+  if (unifyDelay.value) {
+    p.push('')
+    p.push(next() + '统一延迟口径：排除握手耗时，让 url-test 比较真实 RTT')
+    p.push("  config['unified-delay'] = true")
+    p.push('  // 必须用 https 测试地址：mihomo 会复用连接发第二次请求来测 RTT，')
+    p.push('  // http 明文可能被劫持导致第二次失败，那样会退回含握手的延迟（等于没开）')
+    p.push('  for (const g of groups) {')
+    p.push("    if (typeof g.url === 'string' && g.url.indexOf('http://') === 0) {")
+    p.push("      g.url = 'https://' + g.url.slice(7)")
+    p.push('    }')
+    p.push('  }')
+  }
+
+  // ---- 4) TCP 并发 ----
+  if (tcpConcurrent.value) {
+    p.push('')
+    p.push(next() + 'TCP 并发：同一域名解析出多个 IP 时并行握手取最快')
+    p.push('  // 只影响普通网页访问；节点 server 是固定 IP 时不起作用')
+    p.push("  config['tcp-concurrent'] = true")
+  }
+
+  // ---- 5) DNS 兜底换 DoH ----
+  if (dnsOptimize.value) {
+    p.push('')
+    p.push(next() + 'DNS：fallback 里的明文 DNS 换成 DoH，避免兜底本身被污染')
+    p.push('  if (config.dns && Array.isArray(config.dns.fallback)) {')
+    p.push('    config.dns.fallback = [')
+    p.push("      'https://8.8.8.8/dns-query',")
+    p.push("      'https://1.1.1.1/dns-query',")
+    p.push('    ]')
     p.push('  }')
   }
 
@@ -641,19 +691,70 @@ async function copyClashScript() {
             color="primary"
             density="compact"
             hide-details
-            class="mb-3"
           >
             <template #label>
-              <span class="text-body-2">
-                只保留稳定节点（B 级以上）
-                <span class="text-medium-emphasis">
-                  {{ stableList.length
-                    ? `（${stableList.length} 个；会删掉订阅里其余节点）`
-                    : '（这批 IP 没有 B 级以上的节点）' }}
-                </span>
+              <span class="text-body-2">只保留稳定节点</span>
+              <span class="text-caption text-medium-emphasis ml-2">
+                {{ stableList.length
+                  ? `B 级以上，${stableList.length} 个（会删掉订阅里其余节点）`
+                  : '这批 IP 没有 B 级以上的节点' }}
               </span>
             </template>
           </v-switch>
+
+          <v-switch
+            v-model="unifyDelay"
+            color="primary"
+            density="compact"
+            hide-details
+          >
+            <template #label>
+              <span class="text-body-2">统一延迟口径</span>
+              <span class="text-caption text-medium-emphasis ml-2">
+                排除握手耗时，并把测试地址改成 https
+              </span>
+            </template>
+          </v-switch>
+
+          <v-switch
+            v-model="tcpConcurrent"
+            color="primary"
+            density="compact"
+            hide-details
+          >
+            <template #label>
+              <span class="text-body-2">TCP 并发</span>
+              <span class="text-caption text-medium-emphasis ml-2">
+                网页访问更快；对固定 IP 节点无效
+              </span>
+            </template>
+          </v-switch>
+
+          <v-switch
+            v-model="dnsOptimize"
+            color="primary"
+            density="compact"
+            hide-details
+            class="mb-3"
+          >
+            <template #label>
+              <span class="text-body-2">DNS 兜底换 DoH</span>
+              <span class="text-caption text-medium-emphasis ml-2">
+                fallback 的明文 DNS 可能被污染
+              </span>
+            </template>
+          </v-switch>
+
+          <v-alert
+            v-if="unifyDelay"
+            density="compact"
+            variant="tonal"
+            type="warning"
+            class="mb-3 text-caption"
+          >
+            统一延迟会让 url-test 看不到握手成本。建议先用稳定性测试筛掉 TLS 慢的节点再开，
+            否则容易选到「RTT 低但首次打开要等几秒」的节点。
+          </v-alert>
 
           <pre class="code-preview">{{ clashScript }}</pre>
         </v-card-text>
