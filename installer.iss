@@ -2,7 +2,7 @@
 ; 编译：ISCC.exe installer.iss
 
 #define MyAppName "CFSTX"
-#define MyAppVersion "1.2.18"
+#define MyAppVersion "1.2.19"
 #define MyAppPublisher "liliaic"
 #define MyAppURL "https://gitee.com/liliaic/cfstx"
 #define MyAppExeName "cfstx.exe"

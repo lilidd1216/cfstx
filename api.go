@@ -148,6 +148,24 @@ func (a *API) handleAPI(w http.ResponseWriter, r *http.Request) {
 	case path == "/api/test/status" && r.Method == http.MethodGet:
 		writeJSON(w, a.app.Status())
 
+	// 主动获取在线 IP：网络不稳时部分来源会静默失败，
+	// 让用户自己挑时机抓一次、确认结果后再测速。
+	case path == "/api/sources/status" && r.Method == http.MethodGet:
+		writeJSON(w, a.app.GetFetchStatus())
+
+	case path == "/api/sources/fetch" && r.Method == http.MethodPost:
+		var cfg Config
+		if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		res, err := a.app.FetchSources(cfg)
+		if err != nil {
+			writeError(w, http.StatusConflict, err)
+			return
+		}
+		writeJSON(w, res)
+
 	case path == "/api/stability/start" && r.Method == http.MethodPost:
 		var req StabilityRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

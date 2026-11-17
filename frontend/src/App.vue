@@ -39,6 +39,9 @@ const running = ref(false)
 const phase = ref('idle') // idle | fetch | ping | download | done
 const progress = ref({ current: 0, total: 0, available: 0, ip: '', port: 0, speed: 0, msg: '' })
 const results = ref([])
+// 在线 IP 抓取状态：由「获取 IP」按钮驱动，
+// 让用户挑网络好的时候抓一次，确认结果后再测速
+const fetchStatus = ref({ fetching: false, total: 0, time: '' })
 // 稳定性测试：结果按 IP 增量追加，主表格通过 ip:port 关联
 const stabilityResults = ref([])
 const stabilityRunning = ref(false)
@@ -345,6 +348,36 @@ async function stop() {
   }
 }
 
+// 主动获取在线 IP。
+//
+// 抓取过程依赖外网（bestcf.pages.dev、GitHub 镜像、DoH），弱网下
+// 部分来源会静默失败，导致每次拿到的总量不一样。让用户自己挑时机
+// 抓一次、看到结果再测速，比在测速流程里隐式抓取可控。
+async function fetchSources() {
+  if (fetchStatus.value.fetching) return
+  fetchStatus.value = { ...fetchStatus.value, fetching: true, progress: '', msg: '' }
+  try {
+    const res = await httpPost('/api/sources/fetch', config.value)
+    fetchStatus.value = { fetching: false, total: res.total || 0, time: res.time || '' }
+    toast(`已获取 ${res.total} 个 IP`, 'success')
+  } catch (e) {
+    fetchStatus.value = { ...fetchStatus.value, fetching: false, progress: '', msg: '' }
+    toast(String(e), 'error')
+  }
+}
+
+async function restoreFetchStatus() {
+  try {
+    const st = await httpGet('/api/sources/status')
+    if (!st) return
+    fetchStatus.value = {
+      fetching: !!st.fetching,
+      total: st.total || 0,
+      time: st.time || '',
+    }
+  } catch (_) { /* 忽略 */ }
+}
+
 // 稳定性测试：结果由 SSE 逐条推送，这里只负责发起和停止
 async function startStability(payload) {
   if (!results.value.length) {
@@ -540,6 +573,15 @@ function handleEvent(event, data) {
           port: 0,
           speed: 0,
           msg: data.msg || '',
+        }
+        // 主动抓取时，把进度同步到「获取 IP」按钮，让用户在
+        // 60~100 秒的等待里能看到走到哪一步了
+        if (fetchStatus.value.fetching) {
+          fetchStatus.value = {
+            ...fetchStatus.value,
+            progress: data.total > 0 ? `${data.current}/${data.total}` : '',
+            msg: data.msg || '',
+          }
         }
       } else if (data.stage === 'probe') {
         phase.value = 'probe'
@@ -753,6 +795,7 @@ onMounted(async () => {
   await loadHistory()
   await restoreRunState()
   await restoreProxyIPState()
+  await restoreFetchStatus()
   try {
     const v = await httpGet('/api/version')
     if (v?.version) version.value = v.version
@@ -945,11 +988,13 @@ onBeforeUnmount(() => {
         <ConfigPanel
           v-model:config="config"
           :running="running"
+          :fetch-status="fetchStatus"
           @pick-ip-file="pickIpFile"
           @open-bestcf="openBestCF"
           @open-cmliu="openCmliu"
           @open-cfdomains="openCFDomains"
           @apply-preset="applyPreset"
+          @fetch-sources="fetchSources"
         />
 
         <!-- 结果 -->

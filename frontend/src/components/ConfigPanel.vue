@@ -4,10 +4,22 @@ import { computed } from 'vue'
 const config = defineModel('config', { type: Object, required: true })
 const props = defineProps({
   running: { type: Boolean, default: false },
+  // 在线 IP 抓取状态：由 App 统一维护，这里只负责展示
+  fetchStatus: { type: Object, default: () => ({ fetching: false, total: 0, time: '' }) },
 })
-const emit = defineEmits(['pick-ip-file', 'open-bestcf', 'open-cmliu', 'open-cfdomains', 'apply-preset'])
+const emit = defineEmits([
+  'pick-ip-file', 'open-bestcf', 'open-cmliu', 'open-cfdomains', 'apply-preset',
+  'fetch-sources',
+])
 
 const disabled = computed(() => props.running)
+
+// 只有勾了「需要联网抓取」的来源，「获取 IP」才有意义。
+// ip.txt / 手动输入是本地数据，不需要联网。
+const ONLINE_SOURCES = ['bestcf', 'official', 'cmliu', 'cfdomains', 'custom']
+const hasOnlineSource = computed(() =>
+  (config.value.sources || []).some((s) => ONLINE_SOURCES.includes(s))
+)
 
 // 与后端 task.NormalizeProbeDomain 保持一致：粘贴浏览器地址后立即清理，
 // 避免 https://xxx/ 被原样拼进探测 URL（v1.1.5 的全数剔除问题）。
@@ -335,6 +347,36 @@ const customEnabled = computed(() => sources.value.includes('custom'))
         <v-icon size="18" color="primary">mdi-server-network</v-icon>
         <span class="section-title">IP 来源</span>
         <span class="section-desc">可多选，开始测速时合并并按 IP 去重</span>
+        <v-spacer />
+        <!-- 抓取中显示进度，抓完显示总数 —— 这段等待可能持续一分多钟 -->
+        <span
+          v-if="fetchStatus.fetching"
+          class="fetch-status fetch-status-active"
+          :title="fetchStatus.msg || ''"
+        >
+          {{ fetchStatus.progress ? `解析中 ${fetchStatus.progress}` : '正在获取…' }}
+        </span>
+        <span
+          v-else-if="fetchStatus.total"
+          class="fetch-status"
+          :title="`获取于 ${fetchStatus.time}，本次启动内测速会直接复用`"
+        >
+          已获取 {{ fetchStatus.total }} 个 · {{ fetchStatus.time }}
+        </span>
+        <!-- 不用 v-btn 的 loading：它会把文字换成转圈图标，看不到进度数字 -->
+        <v-btn
+          size="small"
+          variant="tonal"
+          color="primary"
+          :prepend-icon="fetchStatus.fetching ? 'mdi-loading' : 'mdi-cloud-download-outline'"
+          :disabled="!hasOnlineSource || disabled || fetchStatus.fetching"
+          class="fetch-btn"
+          @click="emit('fetch-sources')"
+        >
+          {{ fetchStatus.fetching
+            ? (fetchStatus.progress ? fetchStatus.progress : '获取中')
+            : '获取 IP' }}
+        </v-btn>
       </div>
 
       <div class="source-list">
@@ -611,6 +653,34 @@ const customEnabled = computed(() => sources.value.includes('custom'))
   font-size: 12px;
   color: #71717a;
   margin-left: 4px;
+}
+
+/* 在线 IP 缓存状态：数字用等宽，避免总数变化时宽度跳动 */
+.fetch-status {
+  font-size: 12px;
+  color: #8b8b96;
+  font-variant-numeric: tabular-nums;
+  margin-right: 4px;
+  cursor: default;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fetch-status-active {
+  color: #60a5fa;
+}
+
+/* 抓取中让 loading 图标转起来（v-btn 的 loading 属性会吞掉文字，不能用） */
+.fetch-btn :deep(.v-icon.mdi-loading) {
+  animation: fetch-spin 1s linear infinite;
+}
+
+@keyframes fetch-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .hint {

@@ -166,6 +166,8 @@ type App struct {
 	onlineMu    sync.Mutex
 	onlineKey   string
 	onlineCache []*task.Target
+	onlineTime  time.Time
+	fetching    bool
 
 	// 本次运行的过程日志，供导出分析
 	logs []LogEntry
@@ -312,6 +314,115 @@ func onlineCacheKey(opts task.FetchOptions) string {
 		opts.IncludeBestCF, opts.IncludeOfficialCIDR, opts.IncludeCmliuCIDR,
 		opts.IncludeCFDomains, opts.DefaultPort, opts.AllowIPv6,
 		strings.Join(opts.CustomSources, ","))
+}
+
+// buildFetchOptions 把界面配置翻译成抓取参数。
+// runTest 和「主动获取」两条路径共用，避免两处逻辑走偏。
+func buildFetchOptions(cfg Config, onProgress func(done, total int, msg string)) task.FetchOptions {
+	return task.FetchOptions{
+		DefaultPort:         cfg.Port,
+		AllowIPv6:           hasSource(cfg.Sources, sourceIPv6),
+		IncludeBestCF:       hasSource(cfg.Sources, sourceBestCF),
+		IncludeOfficialCIDR: hasSource(cfg.Sources, sourceOfficial),
+		IncludeCmliuCIDR:    hasSource(cfg.Sources, sourceCmliu),
+		IncludeCFDomains:    hasSource(cfg.Sources, sourceCFDomains),
+		CustomSources:       splitSourceLines(cfg.CustomSources),
+		OnProgress:          onProgress,
+	}
+}
+
+// hasOnlineSource 判断配置里是否勾选了需要联网抓取的来源。
+func hasOnlineSource(cfg Config) bool {
+	return hasSource(cfg.Sources, sourceBestCF) || hasSource(cfg.Sources, sourceOfficial) ||
+		hasSource(cfg.Sources, sourceCmliu) || hasSource(cfg.Sources, sourceCFDomains) ||
+		hasSource(cfg.Sources, sourceCustom)
+}
+
+// FetchStatus 是当前在线 IP 缓存的状态快照。
+type FetchStatus struct {
+	Fetching bool   `json:"fetching"`
+	Total    int    `json:"total"`
+	Time     string `json:"time"` // 抓取时刻（HH:MM），空表示还没抓过
+}
+
+// FetchSourcesResult 是一次主动抓取的结果。
+type FetchSourcesResult struct {
+	Total int    `json:"total"`
+	Time  string `json:"time"`
+}
+
+// GetFetchStatus 返回在线 IP 缓存状态。
+func (a *App) GetFetchStatus() FetchStatus {
+	a.onlineMu.Lock()
+	defer a.onlineMu.Unlock()
+	st := FetchStatus{
+		Fetching: a.fetching,
+		Total:    len(a.onlineCache),
+	}
+	if !a.onlineTime.IsZero() {
+		st.Time = a.onlineTime.Format("15:04")
+	}
+	return st
+}
+
+// FetchSources 主动抓取所有勾选的在线 IP 来源。
+//
+// 为什么要单独开一个入口：抓取依赖外网（bestcf.pages.dev、GitHub 镜像、
+// DoH 解析），弱网下部分来源会静默失败，导致每次拿到的总量不一样。
+// 让用户挑网络好的时候（比如开着 VPN）主动抓一次、看到结果再测速，
+// 比在测速流程里隐式抓取可控得多。
+func (a *App) FetchSources(cfg Config) (FetchSourcesResult, error) {
+	if !hasOnlineSource(cfg) {
+		return FetchSourcesResult{}, fmt.Errorf("没有勾选需要联网获取的来源")
+	}
+
+	a.onlineMu.Lock()
+	if a.fetching {
+		a.onlineMu.Unlock()
+		return FetchSourcesResult{}, fmt.Errorf("正在获取中，请稍候")
+	}
+	a.fetching = true
+	a.onlineMu.Unlock()
+
+	defer func() {
+		a.onlineMu.Lock()
+		a.fetching = false
+		a.onlineMu.Unlock()
+	}()
+
+	task.ResetCancel()
+
+	opts := buildFetchOptions(cfg, func(done, total int, msg string) {
+		a.emit("test:progress", task.ProgressEvent{
+			Stage: "fetch", Current: done, Total: total, Msg: msg,
+		})
+	})
+
+	targets, err := task.FetchOnlineTargets(opts)
+	if err == task.ErrCancelled {
+		a.emit("test:log", task.LogEvent{Level: "info", Msg: "在线 IP 获取已取消"})
+		return FetchSourcesResult{}, fmt.Errorf("已取消")
+	}
+	if err != nil {
+		a.emit("test:log", task.LogEvent{Level: "warn", Msg: "在线 IP 获取失败：" + err.Error()})
+		return FetchSourcesResult{}, err
+	}
+
+	now := time.Now()
+	a.onlineMu.Lock()
+	a.onlineKey = onlineCacheKey(opts)
+	a.onlineCache = targets
+	a.onlineTime = now
+	a.onlineMu.Unlock()
+
+	task.ExtraTargets = targets
+
+	a.emit("test:log", task.LogEvent{
+		Level: "info",
+		Msg:   fmt.Sprintf("在线 IP 已获取：%d 个（本次启动内测速会直接复用）", len(targets)),
+	})
+
+	return FetchSourcesResult{Total: len(targets), Time: now.Format("15:04")}, nil
 }
 
 // splitSourceLines 把多行文本拆成 URL 列表，忽略空行与注释。
@@ -633,23 +744,12 @@ func (a *App) runTest(cfg Config) {
 	a.emit("test:started", map[string]any{"time": start.Format("15:04:05")})
 
 	// 勾选了在线来源时：本次启动首次抓取并缓存，之后的测速直接复用
-	if hasSource(cfg.Sources, sourceBestCF) || hasSource(cfg.Sources, sourceOfficial) ||
-		hasSource(cfg.Sources, sourceCmliu) || hasSource(cfg.Sources, sourceCFDomains) ||
-		hasSource(cfg.Sources, sourceCustom) {
-		opts := task.FetchOptions{
-			DefaultPort:         cfg.Port,
-			AllowIPv6:           hasSource(cfg.Sources, sourceIPv6),
-			IncludeBestCF:       hasSource(cfg.Sources, sourceBestCF),
-			IncludeOfficialCIDR: hasSource(cfg.Sources, sourceOfficial),
-			IncludeCmliuCIDR:    hasSource(cfg.Sources, sourceCmliu),
-			IncludeCFDomains:    hasSource(cfg.Sources, sourceCFDomains),
-			CustomSources:       splitSourceLines(cfg.CustomSources),
-			OnProgress: func(done, total int, msg string) {
-				task.ProgressHook(task.ProgressEvent{
-					Stage: "fetch", Current: done, Total: total, Msg: msg,
-				})
-			},
-		}
+	if hasOnlineSource(cfg) {
+		opts := buildFetchOptions(cfg, func(done, total int, msg string) {
+			task.ProgressHook(task.ProgressEvent{
+				Stage: "fetch", Current: done, Total: total, Msg: msg,
+			})
+		})
 		key := onlineCacheKey(opts)
 
 		a.onlineMu.Lock()
@@ -688,6 +788,7 @@ func (a *App) runTest(cfg Config) {
 				a.onlineMu.Lock()
 				a.onlineKey = key
 				a.onlineCache = targets
+				a.onlineTime = time.Now()
 				a.onlineMu.Unlock()
 				task.ExtraTargets = targets
 				a.emit("test:log", task.LogEvent{

@@ -2,6 +2,7 @@ package task
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -27,10 +28,18 @@ const (
 	bestcfSectionID = "yxip"
 	// 列表抓取并发数
 	fetchConcurrency = 12
-	// 域名解析并发数
-	resolveConcurrency = 8
-	// 单个请求超时。bestcf.pages.dev 直连时首包可能需要 10 秒以上，留足余量
+	// 域名解析并发数。
+	//
+	// DoH 查询是很轻量的 HTTP 请求（一次几 KB），8 个并发跑 420 个域名
+	// 要 1~3 分钟，用户点了「获取 IP」后长时间没有任何反馈。
+	resolveConcurrency = 24
+	// 单个列表请求超时。bestcf.pages.dev 直连时首包可能需要 10 秒以上，留足余量
 	fetchTimeout = 30 * time.Second
+	// 单次 DoH 查询超时。
+	//
+	// 和 fetchTimeout 分开：抓列表文件慢一点可以等，但一个域名解析不出来
+	// 就该尽快放弃并换下一个 DoH，否则弱网下整轮会拖到几分钟。
+	resolveTimeout = 8 * time.Second
 	// 单个列表最大读取字节数，防止异常大文件拖垮内存
 	maxBodyBytes = 4 << 20
 	// 自定义源数量上限，避免误填过多把测速时间拖长
@@ -211,7 +220,20 @@ func (c *bestCFClient) get(rawURL string) (string, error) {
 }
 
 func fetchBody(client *http.Client, rawURL string) (string, error) {
-	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	return fetchBodyWithTimeout(client, rawURL, 0)
+}
+
+// fetchBodyWithTimeout 与 fetchBody 相同，但用独立的 context 控制超时。
+// timeout <= 0 时回退到 client 自带的超时。
+func fetchBodyWithTimeout(client *http.Client, rawURL string, timeout time.Duration) (string, error) {
+	ctx := context.Background()
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return "", err
 	}
@@ -232,6 +254,20 @@ func fetchBody(client *http.Client, rawURL string) (string, error) {
 		return "", err
 	}
 	return string(body), nil
+}
+
+// getWithTimeout 和 get 一样先直连后代理，但使用指定的单次超时。
+func (c *bestCFClient) getWithTimeout(rawURL string, timeout time.Duration) (string, error) {
+	body, directErr := fetchBodyWithTimeout(c.direct, rawURL, timeout)
+	if directErr == nil {
+		return body, nil
+	}
+	if c.proxy != nil {
+		if body, err := fetchBodyWithTimeout(c.proxy, rawURL, timeout); err == nil {
+			return body, nil
+		}
+	}
+	return "", directErr
 }
 
 func sanitizeSources(src []string) []string {
@@ -322,7 +358,7 @@ func resolveOne(client *bestCFClient, host string, allowIPv6 bool) []net.IP {
 
 func lookupDoH(client *bestCFClient, endpoint, host, qtype string) []net.IP {
 	u := endpoint + "?name=" + url.QueryEscape(host) + "&type=" + qtype
-	body, err := client.get(u)
+	body, err := client.getWithTimeout(u, resolveTimeout)
 	if err != nil {
 		return nil
 	}
