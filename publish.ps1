@@ -21,10 +21,19 @@ param(
     [switch]$SkipBuild,
     [switch]$GiteeOnly,
     [switch]$GitHubOnly,
-    [switch]$DryRun
+    [switch]$DryRun,
+    # 跳过系统代理直连。
+    # Invoke-RestMethod 会读 Windows 系统代理，而 git push 不会——
+    # 所以会出现「git 推得上去、API 报 SSL 连不上」的情况。
+    [switch]$NoProxy
 )
 
 $ErrorActionPreference = "Stop"
+# 必须在任何 Invoke-RestMethod 之前设置，否则 DefaultWebProxy 已缓存
+if ($NoProxy) {
+    [System.Net.WebRequest]::DefaultWebProxy = $null
+    Write-Host "已禁用系统代理，API 请求将直连" -ForegroundColor DarkGray
+}
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $root
 
