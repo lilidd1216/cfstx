@@ -33,8 +33,12 @@ const (
 	// DoH 查询是很轻量的 HTTP 请求（一次几 KB），8 个并发跑 420 个域名
 	// 要 1~3 分钟，用户点了「获取 IP」后长时间没有任何反馈。
 	resolveConcurrency = 24
-	// 单个列表请求超时。bestcf.pages.dev 直连时首包可能需要 10 秒以上，留足余量
-	fetchTimeout = 30 * time.Second
+	// 单个列表请求超时。
+	//
+	// 各来源是并发抓取的，总耗时约等于最慢的那个，而不是累加。
+	// 30 秒对 raw.githubusercontent.com 这类国内链路偏紧，放宽到 60 秒，
+	// 让慢源也有机会完整返回，避免「每次抓到的数量都不一样」。
+	fetchTimeout = 60 * time.Second
 	// 单次 DoH 查询超时。
 	//
 	// 和 fetchTimeout 分开：抓列表文件慢一点可以等，但一个域名解析不出来
@@ -130,6 +134,23 @@ func parseSourceLine(line string, defaultPort int) (host string, port int, ok bo
 	return host, port, true
 }
 
+// isCIDRLine 判断一行是不是纯 CIDR 写法（如 173.245.48.0/20）。
+// 支持行尾 # 备注，与 parseSourceLine 的处理保持一致。
+func isCIDRLine(line string) bool {
+	line = strings.TrimSpace(line)
+	if line == "" || !strings.Contains(line, "/") {
+		return false
+	}
+	if i := strings.IndexByte(line, '#'); i >= 0 {
+		line = strings.TrimSpace(line[:i])
+	}
+	if line == "" || strings.Contains(strings.ToLower(line), "http") {
+		return false
+	}
+	_, _, err := net.ParseCIDR(line)
+	return err == nil
+}
+
 // isDomainName 判断 host 是否为域名（排除 IP 与 IPv6）。
 func isDomainName(host string) bool {
 	if host == "" || strings.Contains(host, ":") {
@@ -207,16 +228,7 @@ func (c *bestCFClient) CloseIdleConnections() {
 }
 
 func (c *bestCFClient) get(rawURL string) (string, error) {
-	body, directErr := fetchBody(c.direct, rawURL)
-	if directErr == nil {
-		return body, nil
-	}
-	if c.proxy != nil {
-		if body, err := fetchBody(c.proxy, rawURL); err == nil {
-			return body, nil
-		}
-	}
-	return "", directErr
+	return c.getWithTimeout(rawURL, 0)
 }
 
 func fetchBody(client *http.Client, rawURL string) (string, error) {
@@ -256,8 +268,9 @@ func fetchBodyWithTimeout(client *http.Client, rawURL string, timeout time.Durat
 	return string(body), nil
 }
 
-// getWithTimeout 和 get 一样先直连后代理，但使用指定的单次超时。
-func (c *bestCFClient) getWithTimeout(rawURL string, timeout time.Duration) (string, error) {
+// getOnce 只尝试一轮（直连 → 代理），不重试。
+// 供 DoH 查询这类需要「快速失败、换下一个」的场景使用。
+func (c *bestCFClient) getOnce(rawURL string, timeout time.Duration) (string, error) {
 	body, directErr := fetchBodyWithTimeout(c.direct, rawURL, timeout)
 	if directErr == nil {
 		return body, nil
@@ -268,6 +281,35 @@ func (c *bestCFClient) getWithTimeout(rawURL string, timeout time.Duration) (str
 		}
 	}
 	return "", directErr
+}
+
+// getWithTimeout 先直连、失败再走系统代理，两条路都失败时重试一轮。
+//
+// 为什么要重试：实测弱网下「连接重置」非常常见（同一域名同一路径，
+// 前一次 5 秒被 RST，隔几秒再请求就正常）。抓取是并发一次性跑完的，
+// 不重试的话一次抖动就会让整批源少掉一大截，用户看到的就是
+// 「每次抓到的数量都不一样」。
+func (c *bestCFClient) getWithTimeout(rawURL string, timeout time.Duration) (string, error) {
+	var lastErr error
+
+	for attempt := 0; attempt < 2; attempt++ {
+		if attempt > 0 {
+			time.Sleep(600 * time.Millisecond)
+		}
+
+		body, directErr := fetchBodyWithTimeout(c.direct, rawURL, timeout)
+		if directErr == nil {
+			return body, nil
+		}
+		lastErr = directErr
+
+		if c.proxy != nil {
+			if body, err := fetchBodyWithTimeout(c.proxy, rawURL, timeout); err == nil {
+				return body, nil
+			}
+		}
+	}
+	return "", lastErr
 }
 
 func sanitizeSources(src []string) []string {
@@ -306,6 +348,22 @@ func dedupeStrings(in []string) []string {
 	return out
 }
 
+// shortURL 把长 URL 压成「域名 + 路径」的紧凑形式，供进度提示使用。
+func shortURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	s := u.Host
+	if p := strings.TrimSuffix(u.Path, "/"); p != "" {
+		s += p
+	}
+	if len(s) > 52 {
+		s = s[:52] + "…"
+	}
+	return s
+}
+
 // fetchAll 并发抓取全部列表，返回与 links 等长的正文数组（失败的位置为空串）。
 func fetchAll(client *bestCFClient, links []string, report func(done, total int, msg string)) []string {
 	bodies := make([]string, len(links))
@@ -330,7 +388,13 @@ func fetchAll(client *bestCFClient, links []string, report func(done, total int,
 				bodies[i] = body
 			}
 			done++
-			report(done, len(links), link)
+			// 带上成功/失败标记：用户需要能看出哪个源没抓到，
+			// 否则「总数变少」永远是个谜
+			mark := "✓ "
+			if err != nil {
+				mark = "✗ "
+			}
+			report(done, len(links), mark+shortURL(link))
 			mu.Unlock()
 		}(i, link)
 	}
@@ -358,7 +422,7 @@ func resolveOne(client *bestCFClient, host string, allowIPv6 bool) []net.IP {
 
 func lookupDoH(client *bestCFClient, endpoint, host, qtype string) []net.IP {
 	u := endpoint + "?name=" + url.QueryEscape(host) + "&type=" + qtype
-	body, err := client.getWithTimeout(u, resolveTimeout)
+	body, err := client.getOnce(u, resolveTimeout)
 	if err != nil {
 		return nil
 	}
@@ -576,11 +640,24 @@ func FetchOnlineTargets(opts FetchOptions) ([]*Target, error) {
 		ranks[key] = r
 	}
 
+	// 正文里的 CIDR 行（例如 ips-v4 这种清单）单独收集。
+	// parseSourceLine 只认 IP:port 和域名，之前这类行会被整行丢掉，
+	// 用户把 https://www.cloudflare.com/ips-v4 填进自定义源等于白抓。
+	cidrRanges := newIPRanges()
+	cidrRanges.port = opts.DefaultPort
+
 	for _, body := range bodies {
 		if body == "" {
 			continue
 		}
 		for _, line := range strings.Split(body, "\n") {
+			// CIDR 必须最先判断：parseSourceLine 会把 "173.245.48.0/20"
+			// 当作 host 原样返回并标记 ok=true，后面的 IP/域名判断都会落空，
+			// 整行被静默丢弃。
+			if isCIDRLine(line) {
+				cidrRanges.addLine(line, opts.DefaultPort)
+				continue
+			}
 			host, port, ok := parseSourceLine(line, opts.DefaultPort)
 			if !ok {
 				continue
@@ -593,6 +670,10 @@ func FetchOnlineTargets(opts FetchOptions) ([]*Target, error) {
 				}
 			}
 		}
+	}
+
+	for _, t := range cidrRanges.ips {
+		addIP(t.IP.IP, t.Port)
 	}
 
 	// 域名池里的域名单独记账：同一个域名也可能出现在别的来源里，
