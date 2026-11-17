@@ -82,6 +82,18 @@ function scoreColorOf(score) {
   }
 }
 
+// 稳定性达标的节点，用于「复制稳定节点」和 Clash 配置生成。
+//
+// 门槛定在 B（成功率 90%+）而不是 S/A：A 级要求 100% 成功，
+// 而国内到 Cloudflare 的链路拿不到这个数字，实测一批节点里
+// 一个 A 都没有。按 S/A 筛会让这个功能永远筛出空列表。
+function isStable(r) {
+  const s = stabMap.value.get(keyOf(r))
+  return !!s && (s.score === 'S' || s.score === 'A' || s.score === 'B')
+}
+
+const stableList = computed(() => props.results.filter(isStable))
+
 // 悬停提示：把「测没测长连接」和「测了但断了」区分开，
 // 否则两者都会显示成「未测」，误导用户。
 function keepAliveText(s) {
@@ -140,7 +152,14 @@ const maxSpeed = computed(() => Math.max(...props.results.map((r) => r.speed), 1
 // 也标成「推荐」，这个标签就失去意义了。
 const topThree = computed(() =>
   [...scored.value]
-    .filter((x) => x.score >= 50)
+    .filter((x) => {
+      if (x.score < 50) return false
+      // 跑过稳定性测试的话，C/D 级不推荐——用户跑这个功能就是为了筛稳定节点，
+      // 再把 60% 成功率的节点标成「推荐」等于把结论又推翻
+      const s = stabMap.value.get(keyOf(x))
+      if (s && (s.score === 'C' || s.score === 'D')) return false
+      return true
+    })
     .sort((a, b) => b.score - a.score || a.delay - b.delay)
     .slice(0, 3)
 )
@@ -184,14 +203,52 @@ function scoreColor(score) {
   return 'error'
 }
 
+// 复制到剪贴板，WebView2 下 clipboard API 可能不可用，回退到 execCommand
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch (_) {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.top = '-1000px'
+    document.body.appendChild(ta)
+    ta.select()
+    let ok = false
+    try {
+      ok = document.execCommand('copy')
+    } catch (_) {
+      ok = false
+    }
+    document.body.removeChild(ta)
+    return ok
+  }
+}
+
 // 复制为可直接粘贴到客户端 / 订阅框的格式
 async function copyAs(format) {
-  const lines = props.results.map((r) => {
+  let list = props.results
+  if (format === 'stable') {
+    list = stableList.value
+    if (!list.length) {
+      emit(
+        'copied',
+        props.stability.length
+          ? '这批 IP 里没有 B 级以上的节点，建议重新测速换一批'
+          : '还没有稳定性数据，请先点「测试稳定性」'
+      )
+      return
+    }
+  }
+
+  const lines = list.map((r) => {
     const port = r.port || 443
     switch (format) {
       case 'ip':
         return r.ip
       case 'ipport':
+      case 'stable':
         return `${r.ip}:${port}`
       default:
         return `${r.ip}:${port}#${r.colo || 'N/A'}`
@@ -199,28 +256,83 @@ async function copyAs(format) {
   })
   if (!lines.length) return
 
-  const text = lines.join('\n')
-  let ok = false
-  try {
-    await navigator.clipboard.writeText(text)
-    ok = true
-  } catch (_) {
-    // WebView2 下 clipboard API 可能不可用，回退到 execCommand
-    const ta = document.createElement('textarea')
-    ta.value = text
-    ta.style.position = 'fixed'
-    ta.style.top = '-1000px'
-    document.body.appendChild(ta)
-    ta.select()
-    try {
-      ok = document.execCommand('copy')
-    } catch (_) {
-      ok = false
+  const ok = await copyText(lines.join('\n'))
+  const label = format === 'stable' ? `S/A 级节点 ${lines.length} 个` : `${lines.length} 个 IP`
+  emit('copied', ok ? `已复制 ${label}` : '复制失败，请检查剪贴板权限')
+}
+
+// ---- Clash Verge 配置生成 ----
+const clashDialog = ref(false)
+// 是否在脚本里按 IP 过滤掉不稳定节点（默认关闭，属于「激进」选项）
+const filterStableOnly = ref(false)
+
+function openClashDialog() {
+  // 有 S/A 级节点时默认勾上过滤，否则保持关闭
+  filterStableOnly.value = stableList.value.length > 0
+  clashDialog.value = true
+}
+
+// 生成可以直接粘进 Clash Verge「编辑脚本」的 JS。
+//
+// 为什么不生成完整策略组：CFSTX 只知道 IP，不知道用户在订阅里给节点起的名字，
+// 硬塞节点名只会拼出一份连不上的配置。这里改成「改参数 + 按 IP 过滤」，
+// 既不需要节点名，也能让 url-test 不再被烂节点污染。
+const clashScript = computed(() => {
+  const p = []
+  p.push('// 由 CFSTX 生成于 ' + new Date().toLocaleString('zh-CN'))
+  p.push('// 用法：Clash Verge → 订阅 → 右键 → 编辑脚本（Script）→ 粘贴 → 保存 → 重新应用订阅')
+  p.push('')
+  p.push('function main(config, profileName) {')
+  p.push("  const groups = config['proxy-groups'] || []")
+  p.push('')
+  p.push('  // 1) 策略组参数优化')
+  p.push("  const auto = groups.find((g) => g.type === 'url-test')")
+  p.push('  if (auto) {')
+  p.push('    auto.interval = 120    // 5 分钟 → 2 分钟，更早发现节点挂掉')
+  p.push('    auto.tolerance = 100   // 抑制在相近延迟之间反复横跳')
+  p.push('    auto.lazy = false      // 默认 true 时闲置不检测，第二天才发现 timeout')
+  p.push('  }')
+  p.push("  const fb = groups.find((g) => g.type === 'fallback')")
+  p.push('  if (fb) {')
+  p.push('    fb.interval = 60')
+  p.push('    fb.lazy = false')
+  p.push('  }')
+
+  if (filterStableOnly.value && stableList.value.length) {
+    p.push('')
+    p.push('  // 2) 只保留稳定性达标的节点（B 级以上）')
+    p.push('  const stableIPs = new Set([')
+    for (const r of stableList.value) {
+      p.push(`    '${r.ip}',`)
     }
-    document.body.removeChild(ta)
+    p.push('  ])')
+    p.push('  if (Array.isArray(config.proxies)) {')
+    p.push('    // 先记下要被删掉的节点名，好同步清理策略组里的引用，')
+    p.push('    // 否则策略组会指向不存在的节点，mihomo 直接报配置错误')
+    p.push('    const removed = new Set(')
+    p.push('      config.proxies')
+    p.push('        .filter((x) => x.server && !stableIPs.has(x.server))')
+    p.push('        .map((x) => x.name)')
+    p.push('    )')
+    p.push('    config.proxies = config.proxies.filter((x) => !removed.has(x.name))')
+    p.push('    for (const g of groups) {')
+    p.push('      if (Array.isArray(g.proxies)) {')
+    p.push('        g.proxies = g.proxies.filter((n) => !removed.has(n))')
+    p.push('      }')
+    p.push('    }')
+    p.push('  }')
   }
 
-  emit('copied', ok ? `已复制 ${lines.length} 个 IP` : '复制失败，请检查剪贴板权限')
+  p.push('')
+  p.push('  return config')
+  p.push('}')
+  return p.join('\n')
+})
+
+async function copyClashScript() {
+  const ok = await copyText(clashScript.value)
+  emit('copied', ok ? '已复制 Clash 脚本，粘到订阅的「编辑脚本」里即可' : '复制失败，请检查剪贴板权限')
+  if (ok) clashDialog.value = false
 }
 </script>
 
@@ -281,6 +393,18 @@ async function copyAs(format) {
             <v-list-item-title>IP:端口#地区</v-list-item-title>
             <v-list-item-subtitle class="mono">1.2.3.4:443#HKG</v-list-item-subtitle>
           </v-list-item>
+          <v-divider class="my-1" />
+          <v-list-item :disabled="!stableList.length" @click="copyAs('stable')">
+            <v-list-item-title>
+              仅稳定节点（B 级以上）
+              <v-chip v-if="stableList.length" size="x-small" color="success" class="ml-2">
+                {{ stableList.length }}
+              </v-chip>
+            </v-list-item-title>
+            <v-list-item-subtitle class="mono">
+              粘到 edgetunnel 的「自定义优选」
+            </v-list-item-subtitle>
+          </v-list-item>
         </v-list>
       </v-menu>
 
@@ -297,6 +421,17 @@ async function copyAs(format) {
           停止 {{ stabilityProgress.done }}/{{ stabilityProgress.total }}
         </span>
         <span v-else>测试稳定性</span>
+      </v-btn>
+
+      <v-btn
+        v-if="stability.length"
+        variant="tonal"
+        size="small"
+        class="ml-2"
+        prepend-icon="mdi-shield-lock-outline"
+        @click="openClashDialog"
+      >
+        Clash 配置
       </v-btn>
     </v-card-title>
 
@@ -485,6 +620,58 @@ async function copyAs(format) {
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- Clash Verge 配置 -->
+    <v-dialog v-model="clashDialog" max-width="680">
+      <v-card class="stab-dialog">
+        <v-card-title class="d-flex align-center py-3">
+          <v-icon class="mr-2" size="20">mdi-shield-lock-outline</v-icon>
+          <span class="text-subtitle-1 font-weight-medium">Clash Verge 配置</span>
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pt-4">
+          <v-alert density="compact" variant="tonal" type="info" class="mb-4 text-caption">
+            粘到 <strong>Clash Verge → 订阅 → 右键「编辑脚本」（Script）</strong> 里，保存后重新应用订阅。
+            脚本不会被订阅更新覆盖。
+          </v-alert>
+
+          <v-switch
+            v-model="filterStableOnly"
+            :disabled="!stableList.length"
+            color="primary"
+            density="compact"
+            hide-details
+            class="mb-3"
+          >
+            <template #label>
+              <span class="text-body-2">
+                只保留稳定节点（B 级以上）
+                <span class="text-medium-emphasis">
+                  {{ stableList.length
+                    ? `（${stableList.length} 个；会删掉订阅里其余节点）`
+                    : '（这批 IP 没有 B 级以上的节点）' }}
+                </span>
+              </span>
+            </template>
+          </v-switch>
+
+          <pre class="code-preview">{{ clashScript }}</pre>
+        </v-card-text>
+        <v-divider />
+        <v-card-actions class="px-4 py-3">
+          <v-spacer />
+          <v-btn variant="text" @click="clashDialog = false">关闭</v-btn>
+          <v-btn
+            color="primary"
+            variant="flat"
+            prepend-icon="mdi-content-copy"
+            @click="copyClashScript"
+          >
+            复制脚本
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-card>
 </template>
 
@@ -556,5 +743,22 @@ async function copyAs(format) {
 .stab-dialog :deep(.v-alert) {
   font-size: 12px;
   line-height: 1.6;
+}
+
+/* 生成的脚本预览 */
+.code-preview {
+  max-height: 340px;
+  overflow: auto;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #131318;
+  border: 1px solid #2a2a33;
+  font-family: 'Cascadia Mono', 'Consolas', monospace;
+  font-size: 11.5px;
+  line-height: 1.65;
+  color: #c8c8d0;
+  white-space: pre;
+  tab-size: 2;
 }
 </style>
