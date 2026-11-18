@@ -1,12 +1,13 @@
 package task
 
 import (
+	"fmt"
+	"net"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
-
-	"net"
 
 	"gitee.com/liliaic/cfstx/utils"
 )
@@ -96,83 +97,165 @@ func CheckPreferredDomains(cfg DomainCheckConfig, onResult func(*DomainResult)) 
 
 	utils.Cyan.Printf("开始优选域名体检（Host：%s，域名数：%d）\n", cfg.Host, len(cfg.Domains))
 
-	for _, raw := range cfg.Domains {
-		if cancelled() {
-			break
-		}
-		domain := strings.TrimSpace(raw)
-		if domain == "" {
-			continue
-		}
-
-		r := DomainResult{Domain: domain}
-
-		ips := resolveOne(client, domain, false)
-		if len(ips) == 0 {
-			r.Error = "DoH 解析失败或无 A 记录"
-			r.Rating = "无IP"
-			results = append(results, r)
-			if onResult != nil {
-				onResult(&r)
-			}
-			continue
-		}
-
-		r.IPs = make([]string, 0, len(ips))
-		for _, ip := range ips {
-			r.IPs = append(r.IPs, ip.String())
-		}
-		r.Total = len(ips)
-
+	// 阶段一：并发解析所有域名。
+	//
+	// 之前是「解析一个测一个」，78 个域名光解析就要几分钟——
+	// DoH 查询失败的域名还要吃满两次超时。并发解析把这一段压到十几秒。
+	type parsedEntry struct {
+		domain string
+		ips    []net.IP
+		ok     bool
+	}
+	parsed := make([]parsedEntry, len(cfg.Domains))
+	{
 		var (
-			tlsVals []float64
-			sem     = make(chan struct{}, cfg.Concurrency)
-			wg      sync.WaitGroup
-			mu      sync.Mutex
+			pwg sync.WaitGroup
+			psm = make(chan struct{}, 12)
 		)
+		for i, raw := range cfg.Domains {
+			domain := strings.TrimSpace(raw)
+			parsed[i] = parsedEntry{domain: domain}
+			if domain == "" {
+				continue
+			}
+			pwg.Add(1)
+			psm <- struct{}{}
+			go func(i int, d string) {
+				defer pwg.Done()
+				defer func() { <-psm }()
+				// 用户点「停止」后，排队中的域名不再发起 DoH 查询
+				if cancelled() {
+					return
+				}
+				ips := resolveOne(client, d, false)
+				if len(ips) > 0 {
+					parsed[i].ips = ips
+					parsed[i].ok = true
+				}
+			}(i, domain)
+		}
+		pwg.Wait()
+	}
 
-		for _, ip := range ips {
+	// 阶段二：所有域名的所有 IP 共享同一个并发池。
+	//
+	// 早先的写法是「域名串行、域名内 IP 并发」，实测 78 个域名要 400 秒。
+	// 原因是某个域名的 5 个 IP 里有 4 个吃满 8 秒超时，后面的域名只能
+	// 干等——而这时候并发槽位其实是空的。现在 390 个 IP 任务统一排队，
+	// 槽位一空就补下一个，同样并发上限下耗时降到 1/3 左右。
+	type domainAcc struct {
+		res     DomainResult
+		tlsVals []float64
+		pending int32 // 尚未测完的 IP 数
+		emitted int32 // 防止重复收尾
+		mu      sync.Mutex
+	}
+
+	accs := make([]*domainAcc, len(parsed))
+	for i, entry := range parsed {
+		if entry.domain == "" || !entry.ok {
+			continue
+		}
+		acc := &domainAcc{pending: int32(len(entry.ips))}
+		acc.res = DomainResult{Domain: entry.domain, Total: len(entry.ips)}
+		acc.res.IPs = make([]string, 0, len(entry.ips))
+		for _, ip := range entry.ips {
+			acc.res.IPs = append(acc.res.IPs, ip.String())
+		}
+		accs[i] = acc
+	}
+
+	var (
+		wg    sync.WaitGroup
+		sem   = make(chan struct{}, cfg.Concurrency)
+		outMu sync.Mutex
+	)
+
+	// finish 汇总单个域名的结果并回调。可重复调用（幂等）。
+	finish := func(acc *domainAcc) {
+		if !atomic.CompareAndSwapInt32(&acc.emitted, 0, 1) {
+			return
+		}
+		r := &acc.res
+		if r.Total > 0 {
+			r.SuccessRate = float64(r.Available) / float64(r.Total)
+		}
+		if len(acc.tlsVals) > 0 {
+			sort.Float64s(acc.tlsVals)
+			r.BestTLS = acc.tlsVals[0]
+			r.WorstTLS = acc.tlsVals[len(acc.tlsVals)-1]
+			var sum float64
+			for _, v := range acc.tlsVals {
+				sum += v
+			}
+			r.AvgTLS = sum / float64(len(acc.tlsVals))
+		}
+		r.Rating = rateDomain(r)
+
+		outMu.Lock()
+		results = append(results, *r)
+		outMu.Unlock()
+		if onResult != nil {
+			onResult(r)
+		}
+	}
+
+	for _, acc := range accs {
+		if acc == nil {
+			continue
+		}
+		for _, ipStr := range acc.res.IPs {
 			if cancelled() {
 				break
 			}
+			ip := net.ParseIP(ipStr)
+			if ip == nil {
+				atomic.AddInt32(&acc.pending, -1)
+				continue
+			}
 			wg.Add(1)
 			sem <- struct{}{}
-			go func(ip net.IP) {
+			go func(acc *domainAcc, ip net.IP) {
 				defer wg.Done()
 				defer func() { <-sem }()
 
 				target := &Target{IP: &net.IPAddr{IP: ip}, Port: 443}
 				_, tlsDur, _, err := measureOnce(target, url, cfg.Host)
 
-				mu.Lock()
-				defer mu.Unlock()
+				acc.mu.Lock()
 				if err == nil && tlsDur > 0 {
-					r.Available++
-					tlsVals = append(tlsVals, float64(tlsDur.Milliseconds()))
+					acc.res.Available++
+					acc.tlsVals = append(acc.tlsVals, float64(tlsDur.Milliseconds()))
 				}
-			}(ip)
-		}
-		wg.Wait()
+				acc.mu.Unlock()
 
-		if r.Total > 0 {
-			r.SuccessRate = float64(r.Available) / float64(r.Total)
+				if atomic.AddInt32(&acc.pending, -1) == 0 {
+					finish(acc)
+				}
+			}(acc, ip)
 		}
-		if len(tlsVals) > 0 {
-			sort.Float64s(tlsVals)
-			r.BestTLS = tlsVals[0]
-			r.WorstTLS = tlsVals[len(tlsVals)-1]
-			var sum float64
-			for _, v := range tlsVals {
-				sum += v
+	}
+	wg.Wait()
+
+	// 收尾：解析失败的域名，以及被「停止」打断、pending 没归零的域名。
+	for i, entry := range parsed {
+		if entry.domain == "" {
+			continue
+		}
+		acc := accs[i]
+		if acc == nil {
+			r := DomainResult{
+				Domain: entry.domain,
+				Error:  "DoH 解析失败或无 A 记录",
+				Rating: "无IP",
 			}
-			r.AvgTLS = sum / float64(len(tlsVals))
+			results = append(results, r)
+			if onResult != nil {
+				onResult(&r)
+			}
+			continue
 		}
-		r.Rating = rateDomain(&r)
-
-		results = append(results, r)
-		if onResult != nil {
-			onResult(&r)
-		}
+		finish(acc)
 	}
 
 	sortDomainResults(results)
@@ -217,6 +300,51 @@ var DefaultPreferredDomains = []string{
 	"cf.3666888.xyz",        // HuTao
 	"cf.tencentapp.cn",      // KTFF
 	"yg1.ygkkk.dpdns.org",   // YGKKK
+}
+
+// BestCFDomainListURL 是 BestCF 维护的混合列表（IP:端口 / 域名:端口 + 备注）。
+const BestCFDomainListURL = "https://bestcf.pages.dev/domain/all.txt"
+
+// FetchDomainList 抓取远程列表并只保留域名条目。
+//
+// all.txt 是混合格式，里面既有 162.159.198.1:8443 这种 IP，
+// 也有 store.ubi.com:443 这种域名。只有域名能用于 CNAME，
+// 所以这里把 IP 条目过滤掉。
+func FetchDomainList(rawURL string) ([]string, error) {
+	if strings.TrimSpace(rawURL) == "" {
+		rawURL = BestCFDomainListURL
+	}
+
+	client := newFetchClient()
+	defer client.CloseIdleConnections()
+
+	body, err := client.get(rawURL)
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[string]struct{})
+	out := make([]string, 0, 64)
+	for _, line := range strings.Split(body, "\n") {
+		host, _, ok := parseSourceLine(line, 443)
+		if !ok {
+			continue
+		}
+		// 只要域名：IP 条目无法用于 CNAME
+		if net.ParseIP(host) != nil || !isDomainName(host) {
+			continue
+		}
+		if _, dup := seen[host]; dup {
+			continue
+		}
+		seen[host] = struct{}{}
+		out = append(out, host)
+	}
+
+	if len(out) == 0 {
+		return nil, fmt.Errorf("列表里没有可用的域名条目")
+	}
+	return out, nil
 }
 
 // domainCheckTimeout 是单个 IP 的测试超时（秒），供上层展示用。

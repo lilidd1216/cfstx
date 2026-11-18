@@ -189,6 +189,18 @@ func (a *API) handleAPI(w http.ResponseWriter, r *http.Request) {
 	case path == "/api/domain/defaults" && r.Method == http.MethodGet:
 		writeJSON(w, map[string]any{"domains": a.app.GetDefaultDomains()})
 
+	case path == "/api/domain/import" && r.Method == http.MethodPost:
+		var req struct {
+			URL string `json:"url"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		domains, err := a.app.ImportPreferredDomains(req.URL)
+		if err != nil {
+			writeError(w, http.StatusConflict, err)
+			return
+		}
+		writeJSON(w, map[string]any{"domains": domains, "total": len(domains)})
+
 	case path == "/api/domain/start" && r.Method == http.MethodPost:
 		var req DomainCheckRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

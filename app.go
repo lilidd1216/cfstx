@@ -695,6 +695,20 @@ func (a *App) GetDefaultDomains() []string {
 	return task.DefaultPreferredDomains
 }
 
+// ImportPreferredDomains 从远程列表导入域名候选。
+//
+// 优选域名列表变化很快（几周就有失效的），内置的 12 个只够起步。
+// 这个接口让用户随时从 BestCF 的汇总列表同步一份最新的。
+func (a *App) ImportPreferredDomains(rawURL string) ([]string, error) {
+	domains, err := task.FetchDomainList(rawURL)
+	if err != nil {
+		a.appendLog("warn", "domain", "导入优选域名失败："+err.Error())
+		return nil, fmt.Errorf("导入失败：%w", err)
+	}
+	a.appendLog("info", "domain", fmt.Sprintf("已导入 %d 个候选域名", len(domains)))
+	return domains, nil
+}
+
 // StartDomainCheck 启动优选域名体检。
 //
 // 解决的问题：优选域名（saas.sin.fan / cu.877774.xyz 这类）解析出的

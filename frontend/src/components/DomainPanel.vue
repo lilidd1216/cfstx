@@ -16,6 +16,30 @@ const emit = defineEmits(['start', 'stop', 'toast'])
 const host = ref('')
 const domainsText = ref('')
 const loadedDefaults = ref(false)
+const importing = ref(false)
+
+// 从 BestCF 汇总列表导入完整候选集。
+// 内置的 12 个只是起步样本，实际列表有 60+ 个域名，且经常变化。
+async function importFromBestCF() {
+  importing.value = true
+  try {
+    const r = await fetch('/api/domain/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: '' }),
+    })
+    const j = await r.json().catch(() => ({}))
+    if (!r.ok) throw new Error(j.error || `导入失败（${r.status}）`)
+    domainsText.value = j.domains.join('\n')
+    // 粗估：每个域名平均 5 个 IP，20 并发，单次 8 秒上限
+    const minutes = Math.max(1, Math.round((j.total * 2) / 60))
+    emit('toast', `已导入 ${j.total} 个候选域名，预计 ${minutes} 分钟测完`, 'success')
+  } catch (e) {
+    emit('toast', String(e.message || e), 'error')
+  } finally {
+    importing.value = false
+  }
+}
 
 // 首次拿到 defaultHost 时自动填入
 watch(
@@ -169,10 +193,21 @@ function copyBest() {
         size="small"
         variant="text"
         prepend-icon="mdi-restore"
-        :disabled="state.running"
+        :disabled="state.running || importing"
         @click="loadDefaults(true)"
       >
         恢复默认列表
+      </v-btn>
+      <v-btn
+        size="small"
+        variant="tonal"
+        color="primary"
+        :prepend-icon="importing ? 'mdi-loading' : 'mdi-cloud-download-outline'"
+        :disabled="state.running || importing"
+        class="import-btn"
+        @click="importFromBestCF"
+      >
+        {{ importing ? '导入中…' : '从 BestCF 导入全部' }}
       </v-btn>
       <v-spacer />
       <v-btn
@@ -279,6 +314,17 @@ function copyBest() {
   font-family: 'Cascadia Mono', 'Consolas', monospace;
   font-size: 12.5px;
   line-height: 1.7;
+}
+
+/* 导入中的旋转图标（v-btn 的 loading 会吞掉文字，手动控制） */
+.import-btn :deep(.v-icon.mdi-loading) {
+  animation: import-spin 1s linear infinite;
+}
+
+@keyframes import-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .domain-table {
