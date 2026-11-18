@@ -27,7 +27,7 @@ const headers = [
   { title: 'TLS', key: 'tls', align: 'end', width: '104px' },
   { title: '丢包率', key: 'lossRate', align: 'end' },
   { title: '下载速度', key: 'speed', align: 'end' },
-  { title: '地区', key: 'colo', align: 'center', width: '78px' },
+  { title: '地区', key: 'colo', align: 'center', width: '92px' },
   { title: '稳定性', key: 'stability', align: 'center', width: '104px' },
   { title: '评分', key: 'score', align: 'end', width: '64px' },
 ]
@@ -109,6 +109,37 @@ function keepAliveText(s) {
 
 function keyOf(r) {
   return `${r.ip}:${r.port || 443}`
+}
+
+// IATA 三字码 → 中文城市名。
+// Cloudflare 的 cf-ray 头部返回的是机场代码（SIN/HKG/LAX），
+// 复制出去给别人看时没人知道那是什么，所以这里翻译一层。
+const COLO_NAMES = {
+  // 亚太
+  HKG: '香港', SIN: '新加坡', NRT: '东京', KIX: '大阪', ITM: '大阪',
+  TPE: '台北', KHH: '高雄', ICN: '首尔', PUS: '釜山',
+  KUL: '吉隆坡', BKK: '曼谷', MNL: '马尼拉', HAN: '河内', SGN: '胡志明',
+  CGK: '雅加达', DPS: '巴厘岛', DEL: '新德里', BOM: '孟买', MAA: '金奈',
+  SYD: '悉尼', MEL: '墨尔本', AKL: '奥克兰', PER: '珀斯',
+  // 北美
+  LAX: '洛杉矶', SJC: '圣何塞', SFO: '旧金山', SEA: '西雅图',
+  ORD: '芝加哥', IAD: '华盛顿', EWR: '纽约', JFK: '纽约',
+  ATL: '亚特兰大', DFW: '达拉斯', MIA: '迈阿密', DEN: '丹佛',
+  YYZ: '多伦多', YVR: '温哥华',
+  // 欧洲
+  FRA: '法兰克福', AMS: '阿姆斯特丹', LHR: '伦敦', MAN: '曼彻斯特',
+  CDG: '巴黎', MAD: '马德里', FCO: '罗马', MXP: '米兰',
+  WAW: '华沙', ARN: '斯德哥尔摩', HEL: '赫尔辛基', DUB: '都柏林',
+  // 中东 / 非洲 / 南美
+  DXB: '迪拜', TLV: '特拉维夫', JNB: '约翰内斯堡', GRU: '圣保罗',
+  // 中国大陆（CF 一般不给大陆分配边缘节点，留作兜底）
+  PEK: '北京', SHA: '上海', CAN: '广州', SZX: '深圳',
+}
+
+// coloLabel 返回中文城市名；未收录的代码原样返回，避免显示空白。
+function coloLabel(colo) {
+  if (!colo || colo === 'N/A') return 'N/A'
+  return COLO_NAMES[String(colo).toUpperCase()] || colo
 }
 
 // 综合评分：速度 50% + 延迟 35% + 丢包 15%
@@ -251,7 +282,7 @@ async function copyAs(format) {
       case 'stable':
         return `${r.ip}:${port}`
       default:
-        return `${r.ip}:${port}#${r.colo || 'N/A'}`
+        return `${r.ip}:${port}#${coloLabel(r.colo)}`
     }
   })
   if (!lines.length) return
@@ -468,7 +499,7 @@ async function copyClashScript() {
           </v-list-item>
           <v-list-item @click="copyAs('full')">
             <v-list-item-title>IP:端口#地区</v-list-item-title>
-            <v-list-item-subtitle class="mono">1.2.3.4:443#HKG</v-list-item-subtitle>
+            <v-list-item-subtitle class="mono">1.2.3.4:443#香港</v-list-item-subtitle>
           </v-list-item>
           <v-divider class="my-1" />
           <v-list-item :disabled="!stableList.length" @click="copyAs('stable')">
@@ -584,8 +615,14 @@ async function copyClashScript() {
       </template>
 
       <template #item.colo="{ item }">
-        <v-chip size="x-small" variant="tonal" :color="item.colo === 'N/A' ? 'grey' : 'secondary'">
-          {{ item.colo }}
+        <v-chip
+          size="x-small"
+          variant="tonal"
+          :color="item.colo === 'N/A' ? 'grey' : 'secondary'"
+          :title="item.colo === 'N/A' ? '未获取到地区码' : `机场代码 ${item.colo}`"
+          style="white-space: nowrap"
+        >
+          {{ coloLabel(item.colo) }}
         </v-chip>
       </template>
 
