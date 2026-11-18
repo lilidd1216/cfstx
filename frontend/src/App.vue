@@ -734,6 +734,9 @@ function handleEvent(event, data) {
         `优选域名体检完成：${good} 个可用（共 ${domainState.value.results.length} 个）`,
         good > 0 ? 'success' : 'warning'
       )
+      // 体检过程中是按完成顺序追加的，跑完后端才会按评级排名。
+      // 这里重新拉一次，让表格变成「谁最好」的顺序。
+      restoreDomainState()
       break
     }
 

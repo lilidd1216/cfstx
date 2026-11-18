@@ -787,6 +787,11 @@ func (a *App) DomainCheckStatus() DomainCheckStatus {
 	if rs == nil {
 		rs = []task.DomainResult{}
 	}
+	// 跑完后按「评级 → 成功率 → 平均 TLS」排名；
+	// 运行中保持完成顺序，否则每推一条整张表都会重排，行一直跳。
+	if !a.domRunning && len(rs) > 1 {
+		rs = task.SortDomainResults(rs)
+	}
 	return DomainCheckStatus{
 		Running: a.domRunning,
 		Done:    a.domDone,

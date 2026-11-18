@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 
 const props = defineProps({
   // 由 App 统一维护的体检状态
@@ -83,7 +83,14 @@ function start() {
   emit('start', { host: host.value.trim(), domains: list })
 }
 
+// 名次：体检结束后后端返回的就是排名顺序，按下标编号即可。
+// 体检进行中数组还是完成顺序，此时的编号当行号看。
+const ranked = computed(() =>
+  props.state.results.map((r, i) => ({ ...r, rank: i + 1 }))
+)
+
 const headers = [
+  { title: '#', key: 'rank', align: 'center', width: '46px', sortable: false },
   { title: '优选域名', key: 'domain', width: '30%' },
   { title: 'IP 数', key: 'total', align: 'end', width: '70px' },
   { title: '可用', key: 'available', align: 'end', width: '70px' },
@@ -235,7 +242,7 @@ function copyBest() {
 
     <v-data-table
       :headers="headers"
-      :items="state.results"
+      :items="ranked"
       item-value="domain"
       density="comfortable"
       class="domain-table"
@@ -243,6 +250,12 @@ function copyBest() {
       items-per-page="-1"
       hide-default-footer
     >
+      <template #item.rank="{ item }">
+        <span class="mono text-caption" :class="item.rank <= 3 ? 'rank-top' : 'text-disabled'">
+          {{ item.rank }}
+        </span>
+      </template>
+
       <template #item.domain="{ item }">
         <span class="mono text-body-2">{{ item.domain }}</span>
       </template>
@@ -325,6 +338,12 @@ function copyBest() {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* 前三名用亮绿色标出来，一眼能看到该选哪个 */
+.rank-top {
+  color: #4ade80;
+  font-weight: 700;
 }
 
 .domain-table {

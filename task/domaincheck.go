@@ -258,25 +258,31 @@ func CheckPreferredDomains(cfg DomainCheckConfig, onResult func(*DomainResult)) 
 		finish(acc)
 	}
 
-	sortDomainResults(results)
+	results = SortDomainResults(results)
 	return results
 }
 
-// sortDomainResults 按「评级 → 成功率 → 平均 TLS」排序。
-func sortDomainResults(rs []DomainResult) {
+// SortDomainResults 按「评级 → 成功率 → 平均 TLS」排名，返回副本。
+//
+// 体检过程中结果是按完成顺序流式追加的（这样进度看起来自然），
+// 但用户真正需要的是「谁最好」的排名，所以跑完后统一排一次。
+// 返回副本而不是就地排序：调用方可能还在等其他 goroutine 读原切片。
+func SortDomainResults(rs []DomainResult) []DomainResult {
+	out := append([]DomainResult(nil), rs...)
 	rank := map[string]int{
 		"推荐": 0, "可用": 1, "一般": 2, "不推荐": 3, "无IP": 4,
 	}
-	sort.SliceStable(rs, func(i, j int) bool {
-		ri, rj := rank[rs[i].Rating], rank[rs[j].Rating]
+	sort.SliceStable(out, func(i, j int) bool {
+		ri, rj := rank[out[i].Rating], rank[out[j].Rating]
 		if ri != rj {
 			return ri < rj
 		}
-		if rs[i].SuccessRate != rs[j].SuccessRate {
-			return rs[i].SuccessRate > rs[j].SuccessRate
+		if out[i].SuccessRate != out[j].SuccessRate {
+			return out[i].SuccessRate > out[j].SuccessRate
 		}
-		return rs[i].AvgTLS < rs[j].AvgTLS
+		return out[i].AvgTLS < out[j].AvgTLS
 	})
+	return out
 }
 
 // DefaultPreferredDomains 是内置的优选域名列表。
