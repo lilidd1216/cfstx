@@ -187,6 +187,13 @@ type App struct {
 	stabDone    int
 	stabTotal   int
 	stabResults []task.StabilityResult
+
+	// 优选域名体检的独立状态
+	domMu      sync.Mutex
+	domRunning bool
+	domDone    int
+	domTotal   int
+	domResults []task.DomainResult
 }
 
 // appendLog 追加一条运行日志（最多保留最近 5000 条）。
@@ -665,6 +672,113 @@ func (a *App) stabilityTargets(list []string) []*task.Target {
 		out = append(out, &task.Target{IP: &net.IPAddr{IP: ip}, Port: port})
 	}
 	return out
+}
+
+// ---- 优选域名体检 ----
+
+// DomainCheckRequest 是前端发起的优选域名体检请求。
+type DomainCheckRequest struct {
+	Host    string   `json:"host"`    // 测试用的 Host/SNI，通常是自己的入口域名
+	Domains []string `json:"domains"` // 待测域名，为空时使用内置列表
+}
+
+// DomainCheckStatus 是体检状态快照。
+type DomainCheckStatus struct {
+	Running bool                `json:"running"`
+	Done    int                 `json:"done"`
+	Total   int                 `json:"total"`
+	Results []task.DomainResult `json:"results"`
+}
+
+// GetDefaultDomains 返回内置的优选域名列表。
+func (a *App) GetDefaultDomains() []string {
+	return task.DefaultPreferredDomains
+}
+
+// StartDomainCheck 启动优选域名体检。
+//
+// 解决的问题：优选域名（saas.sin.fan / cu.877774.xyz 这类）解析出的
+// 是一批 CF 边缘 IP，好坏混杂，而 DNS 轮询是随机的。这个功能让你在
+// 选定一个域名去 CNAME 之前，先看清它到底稳不稳。
+func (a *App) StartDomainCheck(req DomainCheckRequest) error {
+	a.domMu.Lock()
+	if a.domRunning {
+		a.domMu.Unlock()
+		return fmt.Errorf("优选域名体检正在进行中，请先停止")
+	}
+
+	host := strings.TrimSpace(req.Host)
+	if host == "" {
+		host = a.savedProbeDomain()
+	}
+	if host == "" {
+		a.domMu.Unlock()
+		return fmt.Errorf("请填写测试域名（你自己的入口域名，如 fast2.lds1216.ccwu.cc）")
+	}
+
+	domains := req.Domains
+	if len(domains) == 0 {
+		domains = task.DefaultPreferredDomains
+	}
+
+	a.domRunning = true
+	a.domDone = 0
+	a.domTotal = len(domains)
+	a.domResults = nil
+	a.domMu.Unlock()
+
+	task.ResetCancel()
+
+	cfg := task.DomainCheckConfig{Host: host, Domains: domains}
+
+	a.appendLog("info", "domain", fmt.Sprintf("开始优选域名体检：%d 个域名，Host=%s", len(domains), host))
+	a.emit("domain:start", map[string]any{"total": len(domains)})
+
+	go func() {
+		defer func() {
+			a.domMu.Lock()
+			done := a.domDone
+			a.domRunning = false
+			a.domMu.Unlock()
+			a.emit("domain:done", map[string]any{"total": len(domains), "done": done})
+			a.appendLog("info", "domain", fmt.Sprintf("优选域名体检结束：%d/%d", done, len(domains)))
+		}()
+
+		task.CheckPreferredDomains(cfg, func(r *task.DomainResult) {
+			a.domMu.Lock()
+			a.domDone++
+			a.domResults = append(a.domResults, *r)
+			done := a.domDone
+			a.domMu.Unlock()
+			a.emit("domain:result", map[string]any{
+				"done":   done,
+				"total":  len(domains),
+				"result": r,
+			})
+		})
+	}()
+	return nil
+}
+
+// StopDomainCheck 请求停止体检。
+func (a *App) StopDomainCheck() {
+	task.Cancel()
+}
+
+// DomainCheckStatus 返回体检状态快照。
+func (a *App) DomainCheckStatus() DomainCheckStatus {
+	a.domMu.Lock()
+	defer a.domMu.Unlock()
+	rs := a.domResults
+	if rs == nil {
+		rs = []task.DomainResult{}
+	}
+	return DomainCheckStatus{
+		Running: a.domRunning,
+		Done:    a.domDone,
+		Total:   a.domTotal,
+		Results: rs,
+	}
 }
 
 // savedProbeDomain 从已保存的配置里读取探测域名，作为稳定性测试的兜底目标。

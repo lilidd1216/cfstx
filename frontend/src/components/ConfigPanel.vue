@@ -361,7 +361,7 @@ const customEnabled = computed(() => sources.value.includes('custom'))
           class="fetch-status"
           :title="`获取于 ${fetchStatus.time}，本次启动内测速会直接复用`"
         >
-          已获取 {{ fetchStatus.total }} 个 · {{ fetchStatus.time }}
+          已获取 {{ fetchStatus.total }} 个在线 IP · {{ fetchStatus.time }}
         </span>
         <!-- 不用 v-btn 的 loading：它会把文字换成转圈图标，看不到进度数字 -->
         <v-btn

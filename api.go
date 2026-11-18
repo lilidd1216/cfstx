@@ -185,6 +185,29 @@ func (a *API) handleAPI(w http.ResponseWriter, r *http.Request) {
 	case path == "/api/stability/status" && r.Method == http.MethodGet:
 		writeJSON(w, a.app.StabilityStatus())
 
+	// 优选域名体检
+	case path == "/api/domain/defaults" && r.Method == http.MethodGet:
+		writeJSON(w, map[string]any{"domains": a.app.GetDefaultDomains()})
+
+	case path == "/api/domain/start" && r.Method == http.MethodPost:
+		var req DomainCheckRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := a.app.StartDomainCheck(req); err != nil {
+			writeError(w, http.StatusConflict, err)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+
+	case path == "/api/domain/stop" && r.Method == http.MethodPost:
+		a.app.StopDomainCheck()
+		writeJSON(w, map[string]bool{"ok": true})
+
+	case path == "/api/domain/status" && r.Method == http.MethodGet:
+		writeJSON(w, a.app.DomainCheckStatus())
+
 	case path == "/api/results" && r.Method == http.MethodGet:
 		writeJSON(w, a.app.GetResults())
 

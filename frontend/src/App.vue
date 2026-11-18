@@ -7,6 +7,7 @@ import ResultTable from './components/ResultTable.vue'
 import HistoryDialog from './components/HistoryDialog.vue'
 import OptimizePanel from './components/OptimizePanel.vue'
 import ProxyIPPanel from './components/ProxyIPPanel.vue'
+import DomainPanel from './components/DomainPanel.vue'
 
 const config = ref({
   threads: 200,
@@ -42,6 +43,8 @@ const results = ref([])
 // 在线 IP 抓取状态：由「获取 IP」按钮驱动，
 // 让用户挑网络好的时候抓一次，确认结果后再测速
 const fetchStatus = ref({ fetching: false, total: 0, time: '' })
+// 优选域名体检状态
+const domainState = ref({ running: false, done: 0, total: 0, results: [] })
 // 稳定性测试：结果按 IP 增量追加，主表格通过 ip:port 关联
 const stabilityResults = ref([])
 const stabilityRunning = ref(false)
@@ -91,6 +94,7 @@ let es = null
 // 导航菜单：后续新增页面只需在此追加
 const navItems = [
   { key: 'prefer-ip', title: '优选IP', icon: 'mdi-map-marker-radius-outline' },
+  { key: 'domains', title: '优选域名', icon: 'mdi-earth' },
   { key: 'proxyip', title: 'ProxyIP', icon: 'mdi-swap-horizontal-bold' },
   { key: 'optimize', title: '优化工具', icon: 'mdi-tools' },
 ]
@@ -99,6 +103,10 @@ const pageMeta = {
   'prefer-ip': {
     title: '优选IP',
     desc: '测速 Cloudflare CDN 各 IP 的延迟与下载速度，筛出当前网络下最快的节点',
+  },
+  domains: {
+    title: '优选域名',
+    desc: '测出哪个优选域名在你网络下最稳定，避免 CNAME 到一个抽风的域名',
   },
   proxyip: {
     title: 'ProxyIP',
@@ -359,11 +367,46 @@ async function fetchSources() {
   try {
     const res = await httpPost('/api/sources/fetch', config.value)
     fetchStatus.value = { fetching: false, total: res.total || 0, time: res.time || '' }
-    toast(`已获取 ${res.total} 个 IP`, 'success')
+    toast(`已获取 ${res.total} 个在线 IP（测速时还会合并 ip.txt 和手动输入的）`, 'success')
   } catch (e) {
     fetchStatus.value = { ...fetchStatus.value, fetching: false, progress: '', msg: '' }
     toast(String(e), 'error')
   }
+}
+
+// ---- 优选域名体检 ----
+async function startDomainCheck(payload) {
+  domainState.value = { running: true, done: 0, total: payload.domains.length, results: [] }
+  try {
+    await httpPost('/api/domain/start', payload)
+  } catch (e) {
+    toast(String(e), 'error')
+    domainState.value = { ...domainState.value, running: false }
+  }
+}
+
+async function stopDomainCheck() {
+  try {
+    await httpPost('/api/domain/stop')
+    toast('已请求停止体检', 'info')
+  } catch (e) {
+    toast(String(e), 'error')
+  }
+}
+
+async function restoreDomainState() {
+  try {
+    const st = await httpGet('/api/domain/status')
+    if (!st) return
+    if (st.running || (st.results && st.results.length)) {
+      domainState.value = {
+        running: !!st.running,
+        done: st.done || 0,
+        total: st.total || 0,
+        results: st.results || [],
+      }
+    }
+  } catch (_) { /* 忽略 */ }
 }
 
 async function restoreFetchStatus() {
@@ -667,6 +710,33 @@ function handleEvent(event, data) {
       break
     }
 
+    // ---- 优选域名体检 ----
+    case 'domain:start':
+      domainState.value = { running: true, done: 0, total: data?.total || 0, results: [] }
+      break
+
+    case 'domain:result':
+      if (data?.result) {
+        domainState.value = {
+          ...domainState.value,
+          done: data.done || 0,
+          results: [...domainState.value.results, data.result],
+        }
+      }
+      break
+
+    case 'domain:done': {
+      domainState.value = { ...domainState.value, running: false }
+      const good = domainState.value.results.filter(
+        (r) => r.rating === '推荐' || r.rating === '可用'
+      ).length
+      toast(
+        `优选域名体检完成：${good} 个可用（共 ${domainState.value.results.length} 个）`,
+        good > 0 ? 'success' : 'warning'
+      )
+      break
+    }
+
     case 'update:progress':
       downloadProgress.value = data?.percent || 0
       break
@@ -796,6 +866,7 @@ onMounted(async () => {
   await restoreRunState()
   await restoreProxyIPState()
   await restoreFetchStatus()
+  await restoreDomainState()
   try {
     const v = await httpGet('/api/version')
     if (v?.version) version.value = v.version
@@ -1013,6 +1084,16 @@ onBeforeUnmount(() => {
           @stop-stability="stopStability"
         />
         </template>
+
+        <DomainPanel
+          v-else-if="currentPage === 'domains'"
+          :state="domainState"
+          :default-host="config.probeDomain"
+          :disabled="running"
+          @start="startDomainCheck"
+          @stop="stopDomainCheck"
+          @toast="(text, color) => toast(text, color)"
+        />
 
         <ProxyIPPanel
           v-else-if="currentPage === 'proxyip'"
