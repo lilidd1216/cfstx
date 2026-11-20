@@ -207,9 +207,40 @@ const scored = computed(() => {
   })
 })
 
-// 导出时把当前展示顺序（评分排序）带给后端，保证文件顺序与界面一致。
+// 表格默认按综合评分降序；用户点列头后 sortBy 会同步更新。
+const sortBy = ref([{ key: 'score', order: 'desc' }])
+
+// 稳定性列没有原始数值，按等级映射成可比较的分数。
+function sortValue(r, key) {
+  if (key === 'stability') {
+    const s = stabMap.value.get(keyOf(r))
+    const rank = { S: 4, A: 3, B: 2, C: 1, D: 0 }
+    return s ? (rank[s.score] ?? -1) : -1
+  }
+  return r[key]
+}
+
+// 与表格当前排序一致的结果列表，导出时使用。
+const sortedScored = computed(() => {
+  const list = [...scored.value]
+  const sb = sortBy.value?.[0]
+  if (!sb) return list
+  const { key, order } = sb
+  list.sort((a, b) => {
+    const av = sortValue(a, key)
+    const bv = sortValue(b, key)
+    if (av == null) return bv == null ? 0 : 1
+    if (bv == null) return -1
+    if (av === bv) return 0
+    const r = av < bv ? -1 : 1
+    return order === 'desc' ? -r : r
+  })
+  return list
+})
+
+// 导出时把当前展示顺序（含用户点击的列排序）带给后端，保证文件顺序与界面一致。
 function emitOrdered(name) {
-  emit(name, scored.value.map((r) => keyOf(r)))
+  emit(name, sortedScored.value.map((r) => keyOf(r)))
 }
 
 const maxSpeed = computed(() => Math.max(...props.results.map((r) => r.speed), 1))
@@ -607,6 +638,7 @@ async function copyClashScript() {
     <v-divider />
 
     <v-data-table
+      v-model:sort-by="sortBy"
       :headers="headers"
       :items="scored"
       :loading="loading"
