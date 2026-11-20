@@ -1649,6 +1649,13 @@ func (a *App) GetResults() []ResultItem {
 	return a.resultsOrEmpty()
 }
 
+// SetResults 把历史记录载入为「当前结果」，让导出/稳定性测试等继续可用。
+func (a *App) SetResults(results []ResultItem) {
+	a.mu.Lock()
+	a.results = append([]ResultItem(nil), results...)
+	a.mu.Unlock()
+}
+
 // orderResults 按前端当前展示顺序（评分排序）重排结果。
 // order 是 "ip:port" 列表；不在列表里的结果保持原顺序排在后面。
 func orderResults(results []ResultItem, order []string) []ResultItem {

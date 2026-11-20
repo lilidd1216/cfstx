@@ -286,6 +286,15 @@ func (a *API) handleAPI(w http.ResponseWriter, r *http.Request) {
 	case path == "/api/results" && r.Method == http.MethodGet:
 		writeJSON(w, a.app.GetResults())
 
+	case path == "/api/results" && r.Method == http.MethodPost:
+		var results []ResultItem
+		if err := json.NewDecoder(r.Body).Decode(&results); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		a.app.SetResults(results)
+		writeJSON(w, map[string]bool{"ok": true})
+
 	case path == "/api/export" && r.Method == http.MethodPost:
 		var req struct {
 			Order []string `json:"order"`

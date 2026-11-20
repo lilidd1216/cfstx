@@ -558,7 +558,7 @@ async function pickIpFile() {
   if (path) config.value.ipFile = path
 }
 
-function loadRecord(rec) {
+async function loadRecord(rec) {
   config.value = {
     e2eEnabled: false,
     e2eProtocol: 'vless',
@@ -573,6 +573,10 @@ function loadRecord(rec) {
     ...rec.config,
   }
   results.value = rec.results || []
+  // 同步给后端，否则基于 a.results 的导出会提示「没有可导出的测速结果」。
+  try {
+    await httpPost('/api/results', results.value)
+  } catch (_) { /* 后端不可用时仍允许查看表格 */ }
   phase.value = 'done'
   historyOpen.value = false
   toast('已载入历史记录', 'info')

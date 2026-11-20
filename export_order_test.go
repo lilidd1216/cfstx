@@ -56,3 +56,16 @@ func TestExportTXTChineseColoAndOrder(t *testing.T) {
 		t.Fatalf("导出顺序应与 order 一致，实际:\n%s", text)
 	}
 }
+
+func TestSetResultsEnablesExport(t *testing.T) {
+	app := NewApp()
+	app.SetResults([]ResultItem{{IP: "1.2.3.4", Port: 443, Colo: "HKG", Speed: 5}})
+	path, err := app.ExportTXT(filepath.Join(t.TempDir(), "r.txt"), nil)
+	if err != nil {
+		t.Fatalf("载入历史后应可导出: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), "1.2.3.4:443#香港 5.00MB/s") {
+		t.Fatalf("导出内容错误: %s", data)
+	}
+}
