@@ -49,6 +49,8 @@ type CloudflareIPData struct {
 	*PingData
 	lossRate      float32
 	DownloadSpeed float64
+	// PeakSpeed 是测量窗口的峰值（bytes/s），仅作诊断；排序与筛选用 DownloadSpeed（稳态）。
+	PeakSpeed float64
 }
 
 // 计算丢包率

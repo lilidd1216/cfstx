@@ -129,11 +129,74 @@ func (a *API) handleAPI(w http.ResponseWriter, r *http.Request) {
 	case path == "/api/proxyip/status" && r.Method == http.MethodGet:
 		writeJSON(w, a.app.GetProxyIPStatus())
 
-	case path == "/api/test/start" && r.Method == http.MethodPost:
-		var cfg Config
-		if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+	case path == "/api/pool/status" && r.Method == http.MethodGet:
+		writeJSON(w, map[string]int{"count": a.app.GetPoolCount()})
+
+	case path == "/api/pool" && r.Method == http.MethodDelete:
+		if err := a.app.ClearPool(); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+
+	case path == "/api/e2e/credentials" && r.Method == http.MethodGet:
+		// 只回显「有没有」，不回显内容；禁止缓存。
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, a.app.GetE2ECredentialStatus())
+
+	case path == "/api/e2e/credentials" && r.Method == http.MethodPost:
+		var c E2ECredentials
+		if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
 			writeError(w, http.StatusBadRequest, err)
 			return
+		}
+		if err := a.app.SaveE2ECredentials(c); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+
+	case path == "/api/e2e/credentials" && r.Method == http.MethodDelete:
+		if err := a.app.ClearE2ECredentials(); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+
+	case path == "/api/test/start" && r.Method == http.MethodPost:
+		// 兼容两种 body：
+		//   旧：直接是 Config（脚本 / 旧前端）
+		//   新：{ config: Config, secrets: { uuid, password, wsPath } }
+		// 凭据单独提交，前端不会把它混进 config 一起持久化。
+		var raw map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		var cfg Config
+		if c, ok := raw["config"]; ok {
+			if err := json.Unmarshal(c, &cfg); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+		} else {
+			// 旧格式：整个 body 就是 Config
+			b, _ := json.Marshal(raw)
+			if err := json.Unmarshal(b, &cfg); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+		}
+		if s, ok := raw["secrets"]; ok {
+			var secrets E2ECredentials
+			if err := json.Unmarshal(s, &secrets); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			if err := a.app.SaveE2ECredentials(secrets); err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
 		}
 		if err := a.app.StartTest(cfg); err != nil {
 			writeError(w, http.StatusConflict, err)

@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"gitee.com/liliaic/cfstx/utils"
-
-	"github.com/VividCortex/ewma"
 )
 
 const (
@@ -106,8 +104,9 @@ func TestDownloadSpeed(ipSet utils.PingDelaySet) (speedSet utils.DownloadSpeedSe
 		if cancelled() {
 			break
 		}
-		speed, colo := downloadHandler(&Target{IP: ipSet[i].IP, Port: ipSet[i].Port})
+		speed, peak, colo := downloadHandler(&Target{IP: ipSet[i].IP, Port: ipSet[i].Port})
 		ipSet[i].DownloadSpeed = speed
+		ipSet[i].PeakSpeed = peak
 		if ipSet[i].Colo == "" { // 只有当 Colo 是空的时候，才写入，否则代表之前是 httping 测速并获取过了
 			ipSet[i].Colo = colo
 		}
@@ -118,7 +117,7 @@ func TestDownloadSpeed(ipSet utils.PingDelaySet) (speedSet utils.DownloadSpeedSe
 			if ResultHook != nil {                // 界面实时追加，不用等全部测完
 				ResultHook(ipSet[i])
 			}
-			if len(speedSet) == TestCount {       // 凑够满足条件的 IP 时（下载测速数量 -dn），就跳出循环
+			if len(speedSet) == TestCount { // 凑够满足条件的 IP 时（下载测速数量 -dn），就跳出循环
 				emitProgress(ProgressEvent{
 					Stage: "download", Current: i + 1, Total: testNum,
 					IP: ipSet[i].IP.String(), Port: ipSet[i].Port, Speed: speed / 1024 / 1024, Colo: ipSet[i].Colo,
@@ -178,11 +177,20 @@ func printDownloadDebugInfo(t *Target, err error, statusCode int, url, lastRedir
 }
 
 // return download Speed
-func downloadHandler(t *Target) (float64, string) {
+func downloadHandler(t *Target) (float64, float64, string) {
+	return downloadHandlerFor(t, Timeout)
+}
+
+// downloadHandlerFor 与 downloadHandler 相同，但使用独立的测速时长。
+// 供「两轮测速」的短时粗排复用（粗排默认 1.5s）。
+func downloadHandlerFor(t *Target, timeout time.Duration) (float64, float64, string) {
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
 	var lastRedirectURL string // 用于记录最后一次重定向目标，以便在访问错误时输出
 	client := &http.Client{
 		Transport: &http.Transport{DialContext: getDialContext(t)},
-		Timeout:   Timeout,
+		Timeout:   timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			lastRedirectURL = req.URL.String() // 记录每次重定向的目标，以便在访问错误时输出
 			if len(via) > 10 {                 // 限制最多重定向 10 次
@@ -203,7 +211,7 @@ func downloadHandler(t *Target) (float64, string) {
 		if utils.Debug { // 调试模式下，输出更多信息
 			utils.Red.Printf("[调试] IP: %s, 下载测速请求创建失败，错误信息: %v, 下载测速地址: %s\n", t.Addr(), err, URL)
 		}
-		return 0.0, ""
+		return 0.0, 0.0, ""
 	}
 
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.80 Safari/537.36")
@@ -213,34 +221,34 @@ func downloadHandler(t *Target) (float64, string) {
 		if utils.Debug { // 调试模式下，输出更多信息
 			printDownloadDebugInfo(t, err, 0, URL, lastRedirectURL, response)
 		}
-		return 0.0, ""
+		return 0.0, 0.0, ""
 	}
 	defer response.Body.Close()
 	if response.StatusCode != 200 {
 		if utils.Debug { // 调试模式下，输出更多信息
 			printDownloadDebugInfo(t, nil, response.StatusCode, URL, lastRedirectURL, response)
 		}
-		return 0.0, ""
+		return 0.0, 0.0, ""
 	}
 
 	// 通过头部参数获取地区码
 	colo := getHeaderColo(response.Header)
 
 	timeStart := time.Now()           // 开始时间（当前）
-	timeEnd := timeStart.Add(Timeout) // 加上下载测速时间得到的结束时间
+	timeEnd := timeStart.Add(timeout) // 加上下载测速时间得到的结束时间
 
 	contentLength := response.ContentLength // 文件大小
 	buffer := make([]byte, bufferSize)
 
 	var (
-		contentRead     int64 = 0
-		timeSlice             = Timeout / 100
-		timeCounter           = 1
-		lastContentRead int64 = 0
+		contentRead int64 = 0
+		timeSlice         = timeout / 100
+		timeCounter       = 1
 	)
 
 	var nextTime = timeStart.Add(timeSlice * time.Duration(timeCounter))
-	e := ewma.NewMovingAverage()
+	// 稳态吞吐：丢弃前 1s 慢启动，按 400ms 窗口结算。
+	meter := newWindowMeter(timeStart, time.Second, 400*time.Millisecond)
 
 	// 循环计算，如果文件下载完了（两者相等），则退出循环（终止测速）
 	for contentLength != contentRead {
@@ -248,8 +256,7 @@ func downloadHandler(t *Target) (float64, string) {
 		if currentTime.After(nextTime) {
 			timeCounter++
 			nextTime = timeStart.Add(timeSlice * time.Duration(timeCounter))
-			e.Add(float64(contentRead - lastContentRead))
-			lastContentRead = contentRead
+			meter.tick(currentTime)
 		}
 		// 如果超出下载测速时间，则退出循环（终止测速）
 		if currentTime.After(timeEnd) {
@@ -262,18 +269,97 @@ func downloadHandler(t *Target) (float64, string) {
 			} else if contentLength == -1 { // 文件下载完成 且 文件大小未知，则退出循环（终止测速），例如：https://speed.cloudflare.com/__down?bytes=200000000 这样的，如果在 10 秒内就下载完成了，会导致测速结果明显偏低甚至显示为 0.00（下载速度太快时）
 				break
 			}
-			// 获取上个时间片
-			last_time_slice := timeStart.Add(timeSlice * time.Duration(timeCounter-1))
-			// 下载数据量 / (用当前时间 - 上个时间片/ 时间片)
-			e.Add(float64(contentRead-lastContentRead) / (float64(currentTime.Sub(last_time_slice)) / float64(timeSlice)))
 		}
 		contentRead += int64(bufferRead)
+		meter.add(int64(bufferRead))
 	}
-	// 用「实际下载字节数 / 实际耗时」计算速度。
-	// 原实现按固定的测速时长归一化，当文件在超时前就下载完时会明显低估速度。
-	elapsed := time.Since(timeStart)
-	if elapsed < time.Millisecond {
-		elapsed = time.Millisecond
+	steady, peak := meter.finish(time.Now())
+	return steady, peak, colo
+}
+
+// windowMeter 用滑动窗口统计稳态吞吐。
+//
+// 为什么要丢弃慢启动：TCP 慢启动会让前 1 秒的速率远低于链路实际能力，
+// 直接算「总字节 ÷ 总耗时」会把好链路报低（CFPilot 实测同一链路 1.14 → 0.42 MB/s）。
+// 峰值只作诊断：单个窗口的突发能把峰值翻倍，拿它筛选会把「偶然冲高」当成好节点。
+type windowMeter struct {
+	startedAt     time.Time
+	warmup        time.Duration
+	window        time.Duration
+	windowBytes   int64
+	windowStart   time.Time
+	peak          float64
+	total         int64
+	steadyBytes   int64
+	steadySeconds float64
+}
+
+func newWindowMeter(start time.Time, warmup, window time.Duration) *windowMeter {
+	if window <= 0 {
+		window = 400 * time.Millisecond
 	}
-	return float64(contentRead) / elapsed.Seconds(), colo
+	return &windowMeter{startedAt: start, warmup: warmup, window: window, windowStart: start}
+}
+
+func (m *windowMeter) add(n int64) {
+	if n <= 0 {
+		return
+	}
+	m.windowBytes += n
+	m.total += n
+}
+
+func (m *windowMeter) tick(now time.Time) {
+	if now.Sub(m.windowStart) < m.window {
+		return
+	}
+	m.settle(now)
+}
+
+func (m *windowMeter) settle(now time.Time) {
+	dt := now.Sub(m.windowStart)
+	if dt <= 0 {
+		return
+	}
+	bytes := m.windowBytes
+	start := m.windowStart
+	m.windowBytes = 0
+	m.windowStart = now
+	if bytes == 0 {
+		// 空窗不计时：把「没有数据」当成「测到很慢」会让稳态偏低。
+		return
+	}
+	warmupEnd := m.startedAt.Add(m.warmup)
+	effectiveStart := start
+	if effectiveStart.Before(warmupEnd) {
+		effectiveStart = warmupEnd
+	}
+	effectiveSeconds := now.Sub(effectiveStart).Seconds()
+	if effectiveSeconds <= 0 {
+		return
+	}
+	// 跨界窗口只折算预热结束之后的部分。
+	share := effectiveSeconds / dt.Seconds()
+	m.steadyBytes += int64(float64(bytes) * share)
+	m.steadySeconds += effectiveSeconds
+	// 单位统一为 bytes/s：调用方（MinSpeed 比较、convertResultItem）都按 bytes/s 处理。
+	speed := float64(bytes) / dt.Seconds()
+	if speed > m.peak {
+		m.peak = speed
+	}
+}
+
+func (m *windowMeter) finish(now time.Time) (steady, peak float64) {
+	m.settle(now)
+	if m.peak == 0 && m.total > 0 {
+		if elapsed := now.Sub(m.startedAt).Seconds(); elapsed > 0 {
+			m.peak = float64(m.total) / elapsed
+		}
+	}
+	if m.steadySeconds > 0 {
+		steady = float64(m.steadyBytes) / m.steadySeconds
+	} else {
+		steady = m.peak
+	}
+	return steady, m.peak
 }

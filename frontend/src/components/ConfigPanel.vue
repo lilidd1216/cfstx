@@ -2,17 +2,98 @@
 import { computed } from 'vue'
 
 const config = defineModel('config', { type: Object, required: true })
+// 端到端凭据单独走一个 model，不混进 config，避免被一起持久化。
+const secrets = defineModel('secrets', {
+  type: Object,
+  default: () => ({ uuid: '', password: '', wsPath: '' }),
+})
 const props = defineProps({
   running: { type: Boolean, default: false },
+  e2eCredStatus: {
+    type: Object,
+    default: () => ({ hasUuid: false, hasPassword: false, hasPath: false }),
+  },
+  poolCount: { type: Number, default: 0 },
   // 在线 IP 抓取状态：由 App 统一维护，这里只负责展示
   fetchStatus: { type: Object, default: () => ({ fetching: false, total: 0, time: '' }) },
 })
 const emit = defineEmits([
   'pick-ip-file', 'open-bestcf', 'open-cmliu', 'open-cfdomains', 'apply-preset',
-  'fetch-sources',
+  'fetch-sources', 'clear-pool',
 ])
 
 const disabled = computed(() => props.running)
+
+// 端到端协议与内置目标（v-combobox 允许自定义）
+const protocols = [
+  { title: 'VLESS', value: 'vless' },
+  { title: 'Trojan', value: 'trojan' },
+]
+const targets = [
+  'http://cp.cloudflare.com/generate_204',
+  'http://www.gstatic.com/generate_204',
+]
+
+// 国家/地区选项。value 是 ISO 3166-1 两位代码，必须与后端 task.CountryNames 一致。
+const countryOptions = [
+  { value: 'HK', title: '香港' },
+  { value: 'TW', title: '台湾' },
+  { value: 'JP', title: '日本' },
+  { value: 'KR', title: '韩国' },
+  { value: 'SG', title: '新加坡' },
+  { value: 'US', title: '美国' },
+  { value: 'CA', title: '加拿大' },
+  { value: 'GB', title: '英国' },
+  { value: 'DE', title: '德国' },
+  { value: 'FR', title: '法国' },
+  { value: 'NL', title: '荷兰' },
+  { value: 'AU', title: '澳大利亚' },
+  { value: 'IN', title: '印度' },
+  { value: 'MY', title: '马来西亚' },
+  { value: 'TH', title: '泰国' },
+  { value: 'PH', title: '菲律宾' },
+  { value: 'VN', title: '越南' },
+  { value: 'ID', title: '印度尼西亚' },
+  { value: 'BR', title: '巴西' },
+  { value: 'MX', title: '墨西哥' },
+  { value: 'AE', title: '阿联酋' },
+  { value: 'TR', title: '土耳其' },
+  { value: 'IT', title: '意大利' },
+  { value: 'ES', title: '西班牙' },
+  { value: 'SE', title: '瑞典' },
+  { value: 'PL', title: '波兰' },
+  { value: 'CH', title: '瑞士' },
+  { value: 'AT', title: '奥地利' },
+  { value: 'BE', title: '比利时' },
+  { value: 'DK', title: '丹麦' },
+  { value: 'NO', title: '挪威' },
+  { value: 'FI', title: '芬兰' },
+  { value: 'IE', title: '爱尔兰' },
+  { value: 'PT', title: '葡萄牙' },
+  { value: 'GR', title: '希腊' },
+  { value: 'CZ', title: '捷克' },
+  { value: 'HU', title: '匈牙利' },
+  { value: 'RO', title: '罗马尼亚' },
+  { value: 'BG', title: '保加利亚' },
+  { value: 'NZ', title: '新西兰' },
+  { value: 'AR', title: '阿根廷' },
+  { value: 'CL', title: '智利' },
+  { value: 'CO', title: '哥伦比亚' },
+  { value: 'PE', title: '秘鲁' },
+  { value: 'SA', title: '沙特' },
+  { value: 'QA', title: '卡塔尔' },
+  { value: 'IL', title: '以色列' },
+  { value: 'EG', title: '埃及' },
+  { value: 'ZA', title: '南非' },
+]
+
+// 把用户从地址栏粘来的 https://xxx/ 归一成纯 host
+function normalizeE2EHost() {
+  let v = String(config.value.e2eHost || '').trim()
+  if (v.includes('://')) v = v.split('://')[1]
+  v = v.split(/[/?#]/)[0]
+  config.value.e2eHost = v.toLowerCase()
+}
 
 // 只有勾了「需要联网抓取」的来源，「获取 IP」才有意义。
 // ip.txt / 手动输入是本地数据，不需要联网。
@@ -56,6 +137,13 @@ const presets = [
     color: 'warning',
     label: '极速扫描',
     desc: '不测下载，延迟上限放宽，快速筛一轮',
+  },
+  {
+    key: 'e2e',
+    icon: 'mdi-shield-check-outline',
+    color: 'deep-purple',
+    label: '客户端口径',
+    desc: '开启端到端实测，只保留客户端里真正能用的 IP',
   },
 ]
 
@@ -212,6 +300,123 @@ const customEnabled = computed(() => sources.value.includes('custom'))
       />
     </v-card>
 
+    <!-- 端到端测速 -->
+    <v-card class="section" elevation="0">
+      <div class="section-head">
+        <v-icon size="18" color="deep-purple">mdi-shield-check-outline</v-icon>
+        <span class="section-title">端到端测速（可选）</span>
+        <span class="section-desc">用和 Clash / V2RayN 相同的协议真实请求目标，测出客户端实际体验</span>
+        <v-switch
+          v-model="config.e2eEnabled"
+          :disabled="disabled"
+          density="compact"
+          inset
+          hide-details
+          class="ml-auto"
+        />
+      </div>
+      <div class="hint mb-2">
+        不填凭据会自动跳过，不影响现有测速。建议先把「自定义测速域名」填成同一个域名。
+      </div>
+      <template v-if="config.e2eEnabled">
+        <v-row dense>
+          <v-col cols="12" sm="4" md="2">
+            <v-select
+              v-model="config.e2eProtocol"
+              :items="protocols"
+              item-title="title"
+              item-value="value"
+              label="协议"
+              :disabled="disabled"
+              density="compact"
+            />
+          </v-col>
+          <v-col cols="12" sm="8" md="5">
+            <v-text-field
+              v-model="config.e2eHost"
+              label="域名 / SNI"
+              placeholder="fast2.example.com"
+              :disabled="disabled"
+              density="compact"
+              @blur="normalizeE2EHost"
+            />
+          </v-col>
+          <v-col cols="12" sm="4" md="2">
+            <v-text-field
+              v-model.number="config.e2ePort"
+              label="端口"
+              type="number"
+              :disabled="disabled"
+              density="compact"
+            />
+          </v-col>
+          <v-col cols="12" sm="8" md="3">
+            <v-combobox
+              v-model="config.e2eTarget"
+              :items="targets"
+              label="测速目标"
+              :disabled="disabled"
+              density="compact"
+            />
+          </v-col>
+        </v-row>
+        <v-row dense>
+          <v-col v-if="config.e2eProtocol === 'vless'" cols="12" sm="6" md="4">
+            <v-text-field
+              v-model="secrets.uuid"
+              label="UUID"
+              type="password"
+              :placeholder="e2eCredStatus.hasUuid ? '已保存，留空不修改' : ''"
+              :disabled="disabled"
+              density="compact"
+              prepend-inner-icon="mdi-key-outline"
+            />
+          </v-col>
+          <v-col v-else cols="12" sm="6" md="4">
+            <v-text-field
+              v-model="secrets.password"
+              label="Trojan 口令"
+              type="password"
+              :placeholder="e2eCredStatus.hasPassword ? '已保存，留空不修改' : ''"
+              :disabled="disabled"
+              density="compact"
+              prepend-inner-icon="mdi-key-outline"
+            />
+          </v-col>
+          <v-col cols="12" sm="6" md="8">
+            <v-text-field
+              v-model="secrets.wsPath"
+              label="WS 路径"
+              :placeholder="e2eCredStatus.hasPath ? '已保存，留空不修改' : '/proxyip=...'"
+              :disabled="disabled"
+              density="compact"
+              prepend-inner-icon="mdi-link-variant"
+            />
+          </v-col>
+        </v-row>
+        <v-row dense>
+          <v-col cols="6" sm="3" md="2">
+            <v-text-field v-model.number="config.e2eConcurrency" label="并发" type="number" min="1" max="64" :disabled="disabled" density="compact" />
+          </v-col>
+          <v-col cols="6" sm="3" md="2">
+            <v-text-field v-model.number="config.e2eRetries" label="重试" type="number" min="1" max="5" :disabled="disabled" density="compact" />
+          </v-col>
+          <v-col cols="6" sm="3" md="2">
+          </v-col>
+          <v-col cols="6" sm="3" md="2">
+            <v-text-field v-model.number="config.e2eLimit" label="候选上限" type="number" min="1" max="2000" :disabled="disabled" density="compact" />
+          </v-col>
+          <v-col cols="12" sm="12" md="4" class="d-flex align-center">
+            <v-switch v-model="config.e2eInsecure" label="跳过证书校验" :disabled="disabled" density="compact" inset hide-details />
+            <v-chip v-if="e2eCredStatus.hasUuid || e2eCredStatus.hasPassword" size="small" color="success" variant="tonal" class="ml-2">凭据已保存</v-chip>
+          </v-col>
+        </v-row>
+        <div class="hint">
+          端到端延迟取「冷启动 + 复用连接」两次测量的较小值，与 Clash/V2RayN 面板口径一致；默认上限 3000ms。
+        </div>
+      </template>
+    </v-card>
+
     <!-- 过滤条件 -->
     <v-card class="section" elevation="0">
       <div class="section-head">
@@ -223,27 +428,16 @@ const customEnabled = computed(() => sources.value.includes('custom'))
       <v-row dense>
         <v-col cols="12" sm="6" md="3">
           <v-text-field
-            v-model.number="config.maxDelay"
-            label="延迟上限 (ms)"
+            v-model.number="config.e2eMaxLatency"
+            label="端到端上限 (ms)"
             type="number"
             min="0"
             :disabled="disabled"
             density="compact"
           />
-          <div class="hint">只保留平均延迟低于该值的 IP。</div>
+          <div class="hint">最终筛选依据：真实隧道延迟低于该值才保留（推荐 2000~3000）。</div>
         </v-col>
 
-        <v-col cols="12" sm="6" md="3">
-          <v-text-field
-            v-model.number="config.minDelay"
-            label="延迟下限 (ms)"
-            type="number"
-            min="0"
-            :disabled="disabled"
-            density="compact"
-          />
-          <div class="hint">只保留高于该值的 IP，用于排除延迟低但速度差的节点。</div>
-        </v-col>
 
         <v-col cols="12" sm="6" md="3">
           <v-text-field
@@ -270,6 +464,23 @@ const customEnabled = computed(() => sources.value.includes('custom'))
             density="compact"
           />
           <div class="hint">只保留下载速度高于该值的 IP，需配合「测速数量」使用。</div>
+        </v-col>
+
+        <v-col cols="12">
+          <v-select
+            v-model="config.countryFilter"
+            :items="countryOptions"
+            item-title="title"
+            item-value="value"
+            label="国家/地区（可多选）"
+            multiple
+            chips
+            closable-chips
+            density="compact"
+            :disabled="disabled"
+            hint="只保留所选国家/地区的边缘节点；不选表示不过滤。启用端到端后按真实机房识别，未识别的不误杀。"
+            persistent-hint
+          />
         </v-col>
       </v-row>
     </v-card>
@@ -337,6 +548,27 @@ const customEnabled = computed(() => sources.value.includes('custom'))
             </div>
             <v-switch v-model="config.disableDownload" :disabled="disabled" density="compact" inset />
           </div>
+        </v-col>
+      </v-row>
+
+      <div class="toggle-row">
+        <div class="toggle-text">
+          <div class="toggle-label">两轮测速（先粗排再精测）</div>
+          <div class="hint">对端到端通过的候选先做短测粗排，再对前 {{ config.testCount }} 个做完整精测；粗排值不写进结果。</div>
+        </div>
+        <v-switch
+          v-model="config.coarseEnabled"
+          :disabled="disabled || config.disableDownload"
+          density="compact"
+          inset
+        />
+      </div>
+      <v-row v-if="config.coarseEnabled && !config.disableDownload" dense>
+        <v-col cols="6" sm="3" md="2">
+          <v-text-field v-model.number="config.coarseLimit" label="粗排候选" type="number" min="10" max="500" :disabled="disabled" density="compact" />
+        </v-col>
+        <v-col cols="6" sm="3" md="2">
+          <v-text-field v-model.number="config.coarseTimeout" label="单次时长 (ms)" type="number" min="500" max="10000" :disabled="disabled" density="compact" />
         </v-col>
       </v-row>
     </v-card>
@@ -584,6 +816,20 @@ const customEnabled = computed(() => sources.value.includes('custom'))
         <v-icon size="18" color="primary">mdi-cog-outline</v-icon>
         <span class="section-title">高级选项</span>
         <span class="section-desc">一般保持默认即可</span>
+      </div>
+
+      <div class="d-flex align-center mb-2">
+        <v-icon size="16" class="mr-1">mdi-database-clock-outline</v-icon>
+        <span class="text-caption">历史优质 IP：{{ poolCount }} 个（下次测速自动优先参与）</span>
+        <v-btn
+          v-if="poolCount > 0"
+          size="x-small"
+          variant="text"
+          color="error"
+          class="ml-2"
+          :disabled="disabled"
+          @click="emit('clear-pool')"
+        >清空</v-btn>
       </div>
 
       <v-row dense>

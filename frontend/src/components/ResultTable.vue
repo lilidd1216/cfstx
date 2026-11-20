@@ -11,6 +11,8 @@ const props = defineProps({
   stabilityProgress: { type: Object, default: () => ({ done: 0, total: 0 }) },
   // 弹窗里「测试域名」的默认值，通常来自用户配置的 Worker 域名
   defaultDomain: { type: String, default: '' },
+  // 端到端延迟上限，用于评分归一化与「推荐」过滤
+  e2eMaxLatency: { type: Number, default: 3000 },
 })
 const emit = defineEmits([
   'export',
@@ -23,7 +25,7 @@ const emit = defineEmits([
 const headers = [
   { title: 'IP 地址', key: 'ip', sortable: false, width: '22%' },
   { title: '端口', key: 'port', align: 'center', width: '76px' },
-  { title: '平均延迟', key: 'delay', align: 'end' },
+  { title: '延迟', key: 'delay', align: 'end' },
   { title: 'TLS', key: 'tls', align: 'end', width: '104px' },
   { title: '丢包率', key: 'lossRate', align: 'end' },
   { title: '下载速度', key: 'speed', align: 'end' },
@@ -142,8 +144,11 @@ function coloLabel(colo) {
   return COLO_NAMES[String(colo).toUpperCase()] || colo
 }
 
-// 综合评分：速度 50% + 延迟 35% + 丢包 15%
-// 未开启下载测速（速度全为 0）时退化为：延迟 70% + 丢包 30%
+// 综合评分（可用分量加权，缺哪个就按比例归一化）：
+//   有速度 + 有端到端：速度 35% + 端到端 30% + L1 延迟 20% + 丢包 15%
+//   有速度、无端到端：速度 50% + L1 延迟 35% + 丢包 15%（与旧版一致）
+//   无速度 + 有端到端：端到端 50% + L1 延迟 30% + 丢包 20%
+//   无速度、无端到端：L1 延迟 70% + 丢包 30%（与旧版一致）
 const scored = computed(() => {
   const list = props.results
   if (!list.length) return []
@@ -154,16 +159,42 @@ const scored = computed(() => {
   const maxDelay = Math.max(...delays)
 
   const hasSpeed = maxSpeed > 0
-  const wSpeed = hasSpeed ? 0.5 : 0
-  const wDelay = hasSpeed ? 0.35 : 0.7
-  const wLoss = hasSpeed ? 0.15 : 0.3
+  const hasE2E = list.some((r) => r.e2e?.tested && r.e2e?.ok)
+  const cap = Number(props.e2eMaxLatency) || 3000
   const span = maxDelay - minDelay
+  // 有端到端时 L1 不再参与评分：最终只看「真实延迟 + 速度 + 丢包」
+  const wSpeed = hasSpeed ? 0.5 : 0
+  const wE2E = hasE2E ? (hasSpeed ? 0.35 : 0.75) : 0
+  const wDelay = hasE2E ? 0 : (hasSpeed ? 0.35 : 0.7)
+  const wLoss = hasSpeed ? 0.15 : (hasE2E ? 0.25 : 0.3)
+
+  function e2eScore(e) {
+    if (!e) return null
+    if (!e.ok) return 0
+    const floor = 100
+    const width = Math.max(cap - floor, 1)
+    let v = 100 * Math.min(1, Math.max(0, (cap - e.best) / width))
+    // 成功率降权：3/3=1.0、2/3=0.9、1/3=0.7，避免「一次侥幸很快」排到最前。
+    const sr = e.attempts > 0 ? e.success / e.attempts : 0
+    if (sr >= 1) v *= 1.0
+    else if (sr >= 2 / 3) v *= 0.9
+    else v *= 0.7
+    return v
+  }
 
   return list.map((r) => {
     const speedScore = hasSpeed ? (r.speed / maxSpeed) * 100 : 0
     const delayScore = span > 0 ? ((maxDelay - r.delay) / span) * 100 : 100
     const lossScore = (1 - Math.min(Math.max(r.lossRate, 0), 1)) * 100
-    let score = speedScore * wSpeed + delayScore * wDelay + lossScore * wLoss
+    const es = e2eScore(r.e2e)
+
+    const parts = []
+    if (wSpeed > 0) parts.push({ w: wSpeed, v: speedScore })
+    if (wE2E > 0 && es !== null) parts.push({ w: wE2E, v: es })
+    parts.push({ w: wDelay, v: delayScore })
+    parts.push({ w: wLoss, v: lossScore })
+    const totalW = parts.reduce((sum, p) => sum + p.w, 0) || 1
+    let score = parts.reduce((sum, p) => sum + p.w * p.v, 0) / totalW
 
     // 跑过稳定性测试的话，不稳的节点必须降权——
     // 否则会出现「评分 100、标着推荐，但下载必然断流」这种自相矛盾的结论。
@@ -185,6 +216,8 @@ const topThree = computed(() =>
   [...scored.value]
     .filter((x) => {
       if (x.score < 50) return false
+      // 端到端失败或超过上限的，不推荐——用户配了端到端就是为了拿客户端能用的节点。
+      if (x.e2e?.tested && (!x.e2e.ok || x.e2e.best > (Number(props.e2eMaxLatency) || 3000))) return false
       // 跑过稳定性测试的话，C/D 级不推荐——用户跑这个功能就是为了筛稳定节点，
       // 再把 60% 成功率的节点标成「推荐」等于把结论又推翻
       const s = stabMap.value.get(keyOf(x))
@@ -203,7 +236,8 @@ const summary = computed(() => {
   const best = topThree.value[0]
   if (!best) return `共筛选出 ${n} 个可用 IP，但没有达到推荐标准的节点`
   const port = best.port || 443
-  return `共筛选出 ${n} 个可用 IP，最优 ${best.ip}:${port}（${best.delay.toFixed(0)}ms · ${best.speed.toFixed(1)}MB/s）`
+  const e2e = best.e2e?.tested && best.e2e?.ok ? `端到端 ${best.e2e.best.toFixed(0)}ms · ` : ''
+  return `共筛选出 ${n} 个可用 IP，最优 ${best.ip}:${port}（${e2e}${best.delay.toFixed(0)}ms · ${best.speed.toFixed(1)}MB/s）`
 })
 
 function isTop(item) {
@@ -225,6 +259,22 @@ function delayColor(delay) {
   if (delay < 100) return 'success'
   if (delay < 250) return 'warning'
   return 'error'
+}
+
+function e2eColor(ms) {
+  if (ms < 400) return 'success'
+  if (ms < 1000) return 'warning'
+  return 'error'
+}
+
+function e2eTitle(e) {
+  if (!e) return ''
+  if (!e.ok) return e.error || e.status || '探测失败'
+  const parts = [`冷启动 ${e.cold.toFixed(0)}ms`]
+  if (e.warm > 0) parts.push(`复用 ${e.warm.toFixed(0)}ms`)
+  parts.push(`成功 ${e.success}/${e.attempts}`)
+  if (e.httpStatus) parts.push(`目标 HTTP ${e.httpStatus}`)
+  return parts.join(' · ')
 }
 
 function scoreColor(score) {
@@ -575,7 +625,23 @@ async function copyClashScript() {
       </template>
 
       <template #item.delay="{ item }">
-        <span class="metric-value" :class="`text-${delayColor(item.delay)}`">
+        <!-- 延迟列优先显示端到端（真实隧道）；未启用时退回边缘延迟并注明。 -->
+        <span
+          v-if="item.e2e?.tested && item.e2e.ok"
+          class="metric-value"
+          :class="`text-${e2eColor(item.e2e.best)}`"
+          style="white-space: nowrap"
+          :title="e2eTitle(item.e2e)"
+        >
+          {{ item.e2e.best.toFixed(0) }} ms
+        </span>
+        <span v-else-if="item.e2e?.tested" class="text-error" :title="e2eTitle(item.e2e)">失败</span>
+        <span
+          v-else
+          class="metric-value"
+          :class="`text-${delayColor(item.delay)}`"
+          title="边缘延迟（未启用端到端）"
+        >
           {{ item.delay.toFixed(1) }} ms
         </span>
       </template>

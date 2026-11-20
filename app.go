@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -59,10 +60,11 @@ type Config struct {
 	CustomSources string   `json:"customSources"` // 自定义在线源，每行一个 URL
 
 	// 过滤条件
-	MaxDelay    int     `json:"maxDelay"`
-	MinDelay    int     `json:"minDelay"`
-	MaxLossRate float64 `json:"maxLossRate"`
-	MinSpeed    float64 `json:"minSpeed"`
+	MaxDelay      int      `json:"maxDelay"`
+	MinDelay      int      `json:"minDelay"`
+	MaxLossRate   float64  `json:"maxLossRate"`
+	MinSpeed      float64  `json:"minSpeed"`
+	CountryFilter []string `json:"countryFilter"` // 国家/地区代码（HK/JP/US...），空表示不过滤
 
 	// 下载测速
 	DownloadTime    int    `json:"downloadTime"`
@@ -70,6 +72,25 @@ type Config struct {
 	DisableDownload bool   `json:"disableDownload"`
 	TestAll         bool   `json:"testAll"`
 	URL             string `json:"url"`
+
+	// 端到端（真实隧道）测速。凭据不在这里，单独存 e2e_secrets.json。
+	E2EEnabled     bool   `json:"e2eEnabled"`
+	E2EProtocol    string `json:"e2eProtocol"`
+	E2EHost        string `json:"e2eHost"`
+	E2EPort        int    `json:"e2ePort"`
+	E2ETarget      string `json:"e2eTarget"`
+	E2EConcurrency int    `json:"e2eConcurrency"`
+	E2ERetries     int    `json:"e2eRetries"`
+	E2EMaxLatency  int    `json:"e2eMaxLatency"`
+	E2ELimit       int    `json:"e2eLimit"`
+	E2EInsecure    bool   `json:"e2eInsecure"`
+
+	// 历史优质 IP 池 / 两轮测速
+	PoolEnabled   bool `json:"poolEnabled"`
+	PoolLimit     int  `json:"poolLimit"`
+	CoarseEnabled bool `json:"coarseEnabled"`
+	CoarseLimit   int  `json:"coarseLimit"`
+	CoarseTimeout int  `json:"coarseTimeout"`
 
 	// 输出
 	OutputFile string `json:"outputFile"`
@@ -79,14 +100,17 @@ type Config struct {
 
 // ResultItem 是单条测速结果。
 type ResultItem struct {
-	IP       string  `json:"ip"`
-	Port     int     `json:"port"`
-	Sent     int     `json:"sent"`
-	Received int     `json:"received"`
-	LossRate float64 `json:"lossRate"`
-	Delay    float64 `json:"delay"`
-	Speed    float64 `json:"speed"`
-	Colo     string  `json:"colo"`
+	IP        string  `json:"ip"`
+	Port      int     `json:"port"`
+	Sent      int     `json:"sent"`
+	Received  int     `json:"received"`
+	LossRate  float64 `json:"lossRate"`
+	Delay     float64 `json:"delay"`
+	Speed     float64 `json:"speed"`
+	PeakSpeed float64 `json:"peakSpeed,omitempty"`
+	Colo      string  `json:"colo"`
+	// E2E 是端到端探测结果；未启用或未测时为 nil。
+	E2E *task.E2EResult `json:"e2e,omitempty"`
 }
 
 // HistoryRecord 是一次完整测速的历史记录。
@@ -140,6 +164,11 @@ type Diagnosis struct {
 	MaxSpeed       float64 `json:"maxSpeed"`       // 测到的最高下载速度 MB/s
 	Reason         string  `json:"reason"`         // 直接原因
 	Suggestion     string  `json:"suggestion"`     // 建议操作
+	// 端到端阶段的诊断信息
+	E2ECandidates int            `json:"e2eCandidates"`
+	E2EPassed     int            `json:"e2ePassed"`
+	E2EFailed     int            `json:"e2eFailed"`
+	E2EStages     map[string]int `json:"e2eStages"`
 }
 
 // ProgressInfo 是进度信息。
@@ -245,7 +274,7 @@ func defaultConfig() Config {
 		IPFile:          "ip.txt",
 		Httping:         true,
 		HttpingCode:     0,
-		MaxDelay:        200,
+		MaxDelay:        9999,
 		MinDelay:        0,
 		MaxLossRate:     1.0,
 		MinSpeed:        5,
@@ -255,6 +284,18 @@ func defaultConfig() Config {
 		OutputFile:      "result.csv",
 		PrintNum:        10,
 		DisableDownload: false,
+		E2EProtocol:     "vless",
+		E2ETarget:       task.DefaultE2ETarget,
+		E2EConcurrency:  16,
+		E2ERetries:      3,
+		E2EMaxLatency:   3000,
+		E2ELimit:        150,
+		PoolEnabled:     true,
+		PoolLimit:       200,
+		CoarseEnabled:   true,
+		CoarseLimit:     60,
+		CoarseTimeout:   1500,
+		CountryFilter:   []string{},
 	}
 }
 
@@ -274,6 +315,72 @@ func normalizeConfig(cfg Config) Config {
 		cfg.IPFile = "ip.txt"
 	}
 	cfg.URL = normalizeTestURL(cfg.URL)
+
+	// 端到端探测参数归一化（旧存档没有这些字段，走这里补齐）
+	cfg.E2EHost = task.NormalizeProbeDomain(cfg.E2EHost)
+	cfg.E2EProtocol = strings.ToLower(strings.TrimSpace(cfg.E2EProtocol))
+	if cfg.E2EProtocol != "vless" && cfg.E2EProtocol != "trojan" {
+		cfg.E2EProtocol = "vless"
+	}
+	if cfg.E2ETarget == "" {
+		cfg.E2ETarget = task.DefaultE2ETarget
+	}
+	if cfg.E2EPort <= 0 {
+		cfg.E2EPort = cfg.Port
+	}
+	if cfg.E2EConcurrency <= 0 {
+		cfg.E2EConcurrency = 16
+	}
+	if cfg.E2EConcurrency > 64 {
+		cfg.E2EConcurrency = 64
+	}
+	if cfg.E2ERetries <= 0 {
+		cfg.E2ERetries = 3
+	}
+	if cfg.E2ERetries > 5 {
+		cfg.E2ERetries = 5
+	}
+	if cfg.E2ELimit <= 0 {
+		cfg.E2ELimit = 150
+	}
+	if cfg.E2ELimit > 2000 {
+		cfg.E2ELimit = 2000
+	}
+	// 0 是旧配置的零值，统一补成默认 3000；想「不限制」可以设一个很大的值。
+	if cfg.E2EMaxLatency <= 0 {
+		cfg.E2EMaxLatency = 3000
+	}
+	// 启用端到端后，「延迟上限」只作用于端到端；L1 仅作为内部候选池，
+	// 不再按用户可见的阈值提前筛掉候选。
+	if cfg.E2EEnabled {
+		cfg.MaxDelay = 9999
+		cfg.MinDelay = 0
+	}
+	cfg.CountryFilter = task.NormalizeCountryFilter(cfg.CountryFilter)
+	if cfg.CountryFilter == nil {
+		cfg.CountryFilter = []string{}
+	}
+	if cfg.PoolLimit <= 0 {
+		cfg.PoolLimit = 200
+	}
+	if cfg.PoolLimit > 2000 {
+		cfg.PoolLimit = 2000
+	}
+	if cfg.CoarseLimit <= 0 {
+		cfg.CoarseLimit = 60
+	}
+	if cfg.CoarseLimit > 500 {
+		cfg.CoarseLimit = 500
+	}
+	if cfg.CoarseTimeout <= 0 {
+		cfg.CoarseTimeout = 1500
+	}
+	if cfg.CoarseTimeout < 500 {
+		cfg.CoarseTimeout = 500
+	}
+	if cfg.CoarseTimeout > 10000 {
+		cfg.CoarseTimeout = 10000
+	}
 	return cfg
 }
 
@@ -479,6 +586,10 @@ func (a *App) StartTest(cfg Config) error {
 		return fmt.Errorf("测速正在进行中，请先停止")
 	}
 	cfg = normalizeConfig(cfg)
+	if err := a.validateE2EForStart(cfg); err != nil {
+		a.mu.Unlock()
+		return fmt.Errorf("端到端配置有误：%w", err)
+	}
 	a.running = true
 	a.phase = "ping"
 	a.results = nil
@@ -489,6 +600,28 @@ func (a *App) StartTest(cfg Config) error {
 	_ = writeFileJSON(a.configPath(), cfg)
 	go a.runTest(cfg)
 	return nil
+}
+
+// validateE2EForStart 在开始测速前校验端到端配置。
+// 凭据不完整时**不报错**——只跳过；填了但格式错才报错，避免静默不生效。
+func (a *App) validateE2EForStart(cfg Config) error {
+	if !cfg.E2EEnabled {
+		return nil
+	}
+	creds := a.readE2ECredentials()
+	if !hasCompleteE2ECredentials(cfg, creds) {
+		return nil
+	}
+	vcfg := task.E2EConfig{
+		Protocol:  cfg.E2EProtocol,
+		Host:      cfg.E2EHost,
+		Port:      cfg.E2EPort,
+		UUID:      creds.UUID,
+		Password:  creds.Password,
+		WSPath:    creds.WSPath,
+		TargetURL: cfg.E2ETarget,
+	}
+	return vcfg.Validate()
 }
 
 // StopTest 请求停止当前测速。
@@ -821,6 +954,9 @@ func (a *App) resultsOrEmpty() []ResultItem {
 }
 
 func (a *App) runTest(cfg Config) {
+	// 兜底归一化：API 层已经做过，但集成测试/CLI 可能直接调用。
+	// 不补这一步时，HTTPing 模式的 URL 为空会让所有 IP 失败。
+	cfg = normalizeConfig(cfg)
 	start := time.Now()
 	defer func() {
 		a.mu.Lock()
@@ -856,9 +992,16 @@ func (a *App) runTest(cfg Config) {
 		a.appendLog(e.Level, "", e.Msg)
 		a.emit("test:log", e)
 	}
-	// 下载测速每完成一个达标 IP 就实时推给界面，不必等全部结束
+	// 下载测速每完成一个达标 IP 就实时推给界面，不必等全部结束。
+	// e2eMap 在端到端阶段之后才赋值；闭包按引用读取。
+	var e2eMap map[string]*task.E2EResult
 	task.ResultHook = func(d utils.CloudflareIPData) {
 		item := convertResultItem(d)
+		if e2eMap != nil {
+			if r, ok := e2eMap[fmt.Sprintf("%s:%d", item.IP, item.Port)]; ok {
+				item.E2E = r
+			}
+		}
 		a.mu.Lock()
 		a.results = append(a.results, item)
 		a.mu.Unlock()
@@ -928,6 +1071,18 @@ func (a *App) runTest(cfg Config) {
 					Level: "info",
 					Msg:   fmt.Sprintf("在线优选 IP 已获取：%d 个（已按 IP 去重，本次启动内复用）", len(targets)),
 				})
+			}
+		}
+	}
+
+	// 历史优质 IP 池：上次端到端通过的地址优先参与本轮。
+	// 放在在线来源抓取之后、域名探测之前，保证 ExtraTargets 已就绪。
+	if cfg.PoolEnabled {
+		if pool := task.LoadIPPool(a.poolPath()); pool != nil {
+			poolTargets := pool.Targets(cfg.PoolLimit)
+			if len(poolTargets) > 0 {
+				task.ExtraTargets = append(poolTargets, task.ExtraTargets...)
+				a.appendLog("info", "pool", fmt.Sprintf("已载入历史优质 IP：%d 个", len(poolTargets)))
 			}
 		}
 	}
@@ -1016,13 +1171,198 @@ func (a *App) runTest(cfg Config) {
 	a.appendLog("info", "ping", fmt.Sprintf(
 		"延迟测速完成 | 参与=%d 连通=%d 通过延迟/丢包过滤=%d", participated, availableCount, afterDelay))
 
+	// ---- 端到端（真实隧道）终筛 ----
+	//
+	// 为什么放在下载之前：L1（到 CF 边缘）与 L3（端到端）几乎不相关；
+	// 先下载再终筛会把最慢的下载时间花在客户端根本不可用的 IP 上。
+	// 未启用端到端时，按 L1 的 colo 做国家过滤。
+	// TCP 模式没有 colo，此时 MatchCountry 会保留全部（无法判断就不误杀）。
+	if !cfg.E2EEnabled && len(cfg.CountryFilter) > 0 {
+		filtered := make(utils.PingDelaySet, 0, len(pingData))
+		for _, item := range pingData {
+			if task.MatchCountry(item.Colo, cfg.CountryFilter) {
+				filtered = append(filtered, item)
+			}
+		}
+		if len(filtered) != len(pingData) {
+			a.appendLog("info", "filter", fmt.Sprintf(
+				"国家/地区筛选：%d → %d", len(pingData), len(filtered)))
+		}
+		pingData = filtered
+	}
+
+	downloadInput := pingData
+	if cfg.E2EEnabled {
+		creds := a.readE2ECredentials()
+		if !hasCompleteE2ECredentials(cfg, creds) {
+			a.appendLog("warn", "e2e", "未填写完整的端到端凭据，已跳过端到端测速")
+		} else {
+			candidates := task.SelectE2ECandidates(pingData, cfg.E2ELimit, cfg.TestCount)
+			a.mu.Lock()
+			a.phase = "e2e"
+			a.mu.Unlock()
+			a.emit("test:phase", "e2e")
+			a.appendLog("info", "e2e", fmt.Sprintf(
+				"开始端到端测速 | 候选=%d 并发=%d 重试=%d 目标=%s",
+				len(candidates), cfg.E2EConcurrency, cfg.E2ERetries, cfg.E2ETarget))
+
+			index := make(map[string]utils.CloudflareIPData, len(candidates))
+			targets := make([]*task.Target, 0, len(candidates))
+			for _, item := range candidates {
+				index[fmt.Sprintf("%s:%d", item.IP.String(), item.Port)] = item
+				targets = append(targets, &task.Target{IP: item.IP, Port: item.Port})
+			}
+			e2eCfg := task.E2EConfig{
+				Protocol:       cfg.E2EProtocol,
+				Host:           cfg.E2EHost,
+				Port:           cfg.E2EPort,
+				UUID:           creds.UUID,
+				Password:       creds.Password,
+				WSPath:         creds.WSPath,
+				TargetURL:      cfg.E2ETarget,
+				Concurrency:    cfg.E2EConcurrency,
+				Attempts:       cfg.E2ERetries,
+				AttemptTimeout: 8 * time.Second,
+				MaxLatency:     time.Duration(cfg.E2EMaxLatency) * time.Millisecond,
+				Limit:          cfg.E2ELimit,
+				Insecure:       cfg.E2EInsecure,
+			}
+			e2eResults := task.ProbeE2E(targets, e2eCfg, func(done, total, passed int, r *task.E2EResult) {
+				if task.ProgressHook != nil {
+					task.ProgressHook(task.ProgressEvent{
+						Stage: "e2e", Current: done, Total: total, Available: passed,
+						IP: r.IP, Port: r.Port, Msg: e2eProgressMessage(r),
+					})
+				}
+			})
+
+			if cfg.PoolEnabled {
+				pool := task.LoadIPPool(a.poolPath())
+				if pool == nil {
+					pool = task.NewIPPool()
+				}
+				pool.MergeResults(e2eResults)
+				if err := task.SaveIPPool(a.poolPath(), pool); err == nil {
+					a.appendLog("info", "pool", fmt.Sprintf("已更新历史优质 IP：%d 个", pool.Count()))
+				}
+			}
+
+			e2eMap = make(map[string]*task.E2EResult, len(e2eResults))
+			stages := map[string]int{}
+			passed := make(utils.PingDelaySet, 0, len(e2eResults))
+			countryFiltered := 0
+			for i := range e2eResults {
+				r := &e2eResults[i]
+				key := fmt.Sprintf("%s:%d", r.IP, r.Port)
+				e2eMap[key] = r
+				if !r.OK {
+					stages[r.Stage]++
+					continue
+				}
+				// 目标响应没带 cf-ray 时，退回 L1 的 colo（HTTPing 模式才有）。
+				if r.Colo == "" {
+					if item, ok := index[key]; ok {
+						r.Colo = item.Colo
+					}
+				}
+				if cfg.E2EMaxLatency > 0 && r.Best > float64(cfg.E2EMaxLatency) {
+					continue
+				}
+				if len(cfg.CountryFilter) > 0 && !task.MatchCountry(r.Colo, cfg.CountryFilter) {
+					countryFiltered++
+					continue
+				}
+				if item, ok := index[key]; ok {
+					passed = append(passed, item)
+				}
+			}
+			sort.SliceStable(passed, func(i, j int) bool {
+				ki := fmt.Sprintf("%s:%d", passed[i].IP.String(), passed[i].Port)
+				kj := fmt.Sprintf("%s:%d", passed[j].IP.String(), passed[j].Port)
+				return e2eMap[ki].Best < e2eMap[kj].Best
+			})
+			downloadInput = passed
+			a.appendLog("info", "e2e", fmt.Sprintf(
+				"端到端测速完成 | 候选=%d 通过=%d 国家过滤=%d", len(e2eResults), len(passed), countryFiltered))
+			if len(passed) == 0 {
+				reason := e2eReason(e2eResults, cfg)
+				suggestion := "检查域名、UUID/密码、WS 路径是否与客户端一致；也可能是 Worker 的 PROXYIP 中继不可用，可先用「ProxyIP 优选」换一个中继再试。"
+				if countryFiltered > 0 {
+					reason = fmt.Sprintf("有 %d 个 IP 端到端可用，但都不在所选国家/地区内", countryFiltered)
+					suggestion = "放宽或清空「国家/地区」筛选，或提高端到端候选上限后重试。"
+				}
+				d := &Diagnosis{
+					TotalTargets: totalTargets, ProbePassed: probePassed,
+					Available: availableCount, AfterDelay: afterDelay,
+					E2ECandidates: len(e2eResults), E2EPassed: 0,
+					E2EFailed: len(e2eResults), E2EStages: stages,
+					Reason:     reason,
+					Suggestion: suggestion,
+				}
+				a.appendLog("warn", "diagnosis", d.Reason+"；建议："+d.Suggestion)
+				a.mu.Lock()
+				a.phase = "done"
+				a.mu.Unlock()
+				a.emit("test:finished", map[string]any{
+					"results":   []ResultItem{},
+					"duration":  time.Since(start).Seconds(),
+					"diagnosis": d,
+				})
+				return
+			}
+		}
+	}
+
+	// 两轮测速：先对端到端通过的候选做短时粗排，再对前 N 做完整精测。
+	// 粗排值只用于排序，绝不写进结果。
+	if cfg.CoarseEnabled && !cfg.DisableDownload && len(downloadInput) > cfg.TestCount {
+		limit := cfg.CoarseLimit
+		if limit <= 0 {
+			limit = 60
+		}
+		if limit > len(downloadInput) {
+			limit = len(downloadInput)
+		}
+		coarseTargets := make([]*task.Target, 0, limit)
+		for _, item := range downloadInput[:limit] {
+			coarseTargets = append(coarseTargets, &task.Target{IP: item.IP, Port: item.Port})
+		}
+		a.mu.Lock()
+		a.phase = "coarse"
+		a.mu.Unlock()
+		a.emit("test:phase", "coarse")
+		a.appendLog("info", "coarse", fmt.Sprintf(
+			"开始两轮测速粗排 | 候选=%d 单次=%dms", limit, cfg.CoarseTimeout))
+		speeds := task.CoarseSpeed(coarseTargets, time.Duration(cfg.CoarseTimeout)*time.Millisecond, limit,
+			func(done, total int, r task.CoarseResult) {
+				if task.ProgressHook != nil {
+					task.ProgressHook(task.ProgressEvent{
+						Stage: "coarse", Current: done, Total: total,
+						IP: r.IP, Port: r.Port, Speed: r.Speed,
+					})
+				}
+			})
+		sort.SliceStable(downloadInput, func(i, j int) bool {
+			ki := fmt.Sprintf("%s:%d", downloadInput[i].IP.String(), downloadInput[i].Port)
+			kj := fmt.Sprintf("%s:%d", downloadInput[j].IP.String(), downloadInput[j].Port)
+			return speeds[ki] > speeds[kj]
+		})
+	}
+
 	a.mu.Lock()
 	a.phase = "download"
 	a.mu.Unlock()
 	a.emit("test:phase", "download")
 
-	speedData := task.TestDownloadSpeed(pingData)
+	speedData := task.TestDownloadSpeed(downloadInput)
 	results := convertResults(speedData)
+	attachE2E(results, e2eMap)
+	if e2eMap == nil {
+		// 没有端到端时按网段分散（P0）；有端到端时以真实延迟为准。
+		results = diversifyResultItems(results)
+	} else {
+		sortResultsByE2E(results)
+	}
 
 	a.appendLog("info", "download", fmt.Sprintf(
 		"下载测速完成 | 参与=%d 结果=%d", len(speedData), len(results)))
@@ -1159,14 +1499,15 @@ func convertResultItem(d utils.CloudflareIPData) ResultItem {
 		colo = "N/A"
 	}
 	return ResultItem{
-		IP:       d.IP.String(),
-		Port:     d.Port,
-		Sent:     d.Sended,
-		Received: d.Received,
-		LossRate: loss,
-		Delay:    float64(d.Delay.Microseconds()) / 1000.0,
-		Speed:    d.DownloadSpeed / 1024 / 1024,
-		Colo:     colo,
+		IP:        d.IP.String(),
+		Port:      d.Port,
+		Sent:      d.Sended,
+		Received:  d.Received,
+		LossRate:  loss,
+		Delay:     float64(d.Delay.Microseconds()) / 1000.0,
+		Speed:     d.DownloadSpeed / 1024 / 1024,
+		PeakSpeed: d.PeakSpeed / 1024 / 1024,
+		Colo:      colo,
 	}
 }
 
@@ -1176,6 +1517,125 @@ func convertResults(data utils.DownloadSpeedSet) []ResultItem {
 		out = append(out, convertResultItem(d))
 	}
 	return out
+}
+
+// hasCompleteE2ECredentials 判断是否具备跑端到端探测的最低条件。
+// 不完整时只记警告并跳过，不阻塞测速——否则旧用户升级后第一次测速会被卡住。
+func hasCompleteE2ECredentials(cfg Config, c E2ECredentials) bool {
+	if strings.TrimSpace(cfg.E2EHost) == "" {
+		return false
+	}
+	if strings.TrimSpace(c.WSPath) == "" {
+		return false
+	}
+	if cfg.E2EProtocol == "trojan" {
+		return strings.TrimSpace(c.Password) != ""
+	}
+	return strings.TrimSpace(c.UUID) != ""
+}
+
+func e2eProgressMessage(r *task.E2EResult) string {
+	if r.OK {
+		if r.Warm > 0 {
+			return fmt.Sprintf("%.0fms（冷启动 %.0fms）", r.Best, r.Cold)
+		}
+		return fmt.Sprintf("%.0fms", r.Best)
+	}
+	return r.Error
+}
+
+func e2eReason(results []task.E2EResult, cfg Config) string {
+	failed, auth := 0, 0
+	for i := range results {
+		if results[i].OK {
+			continue
+		}
+		failed++
+		if results[i].Status == task.E2EStatusProtocolAuth {
+			auth++
+		}
+	}
+	if failed > 0 && auth*2 >= failed {
+		return fmt.Sprintf("端到端探测了 %d 个 IP，其中 %d 个在认证阶段失败：UUID/密码或协议选错了", len(results), auth)
+	}
+	return fmt.Sprintf("端到端探测了 %d 个 IP，没有一个能在 %dms 内完成真实请求", len(results), cfg.E2EMaxLatency)
+}
+
+func attachE2E(results []ResultItem, m map[string]*task.E2EResult) {
+	if len(m) == 0 {
+		return
+	}
+	for i := range results {
+		if r, ok := m[fmt.Sprintf("%s:%d", results[i].IP, results[i].Port)]; ok {
+			results[i].E2E = r
+			// 端到端拿到的是目标响应里的真实边缘机房，比 L1 更可信。
+			if r.Colo != "" {
+				results[i].Colo = r.Colo
+			}
+		}
+	}
+}
+
+// diversifyResultItems 按 IPv4 /16、IPv6 /48 轮转重排，避免前 N 名挤在同一网段。
+// 只调顺序、不截断：前端按 printNum 截断后自然分散，导出也受益。
+func diversifyResultItems(results []ResultItem) []ResultItem {
+	if len(results) <= 1 {
+		return results
+	}
+	buckets := make(map[string][]ResultItem)
+	order := make([]string, 0, 16)
+	for _, r := range results {
+		key := resultBucketKey(r.IP)
+		if _, ok := buckets[key]; !ok {
+			order = append(order, key)
+		}
+		buckets[key] = append(buckets[key], r)
+	}
+	out := make([]ResultItem, 0, len(results))
+	for round := 0; len(out) < len(results); round++ {
+		progressed := false
+		for _, key := range order {
+			if round < len(buckets[key]) {
+				out = append(out, buckets[key][round])
+				progressed = true
+			}
+		}
+		if !progressed {
+			break
+		}
+	}
+	return out
+}
+
+func resultBucketKey(ip string) string {
+	if strings.Contains(ip, ":") {
+		parts := strings.Split(ip, ":")
+		if len(parts) >= 3 {
+			return parts[0] + ":" + parts[1] + ":" + parts[2]
+		}
+		return ip
+	}
+	parts := strings.Split(ip, ".")
+	if len(parts) >= 2 {
+		return parts[0] + "." + parts[1]
+	}
+	return ip
+}
+
+// sortResultsByE2E：有端到端的按 Best 升序，失败/无端到端排后，速度降序兜底。
+func sortResultsByE2E(results []ResultItem) {
+	sort.SliceStable(results, func(i, j int) bool {
+		ai, aj := results[i].E2E, results[j].E2E
+		aok := ai != nil && ai.OK
+		bok := aj != nil && aj.OK
+		if aok != bok {
+			return aok
+		}
+		if aok && bok && ai.Best != aj.Best {
+			return ai.Best < aj.Best
+		}
+		return results[i].Speed > results[j].Speed
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -1212,8 +1672,18 @@ func (a *App) ExportCSV(path string) (string, error) {
 	defer f.Close()
 
 	w := csv.NewWriter(f)
-	_ = w.Write([]string{"IP 地址", "端口", "已发送", "已接收", "丢包率", "平均延迟", "下载速度(MB/s)", "地区码"})
+	_ = w.Write([]string{"IP 地址", "端口", "已发送", "已接收", "丢包率", "平均延迟", "下载速度(MB/s)", "地区码", "端到端(ms)", "端到端冷启动(ms)", "端到端状态"})
 	for _, r := range results {
+		e2eBest, e2eCold, e2eStatus := "", "", ""
+		if r.E2E != nil && r.E2E.Tested {
+			if r.E2E.OK {
+				e2eBest = fmt.Sprintf("%.0f", r.E2E.Best)
+				e2eCold = fmt.Sprintf("%.0f", r.E2E.Cold)
+				e2eStatus = "ok"
+			} else {
+				e2eStatus = r.E2E.Status
+			}
+		}
 		_ = w.Write([]string{
 			r.IP,
 			strconv.Itoa(r.Port),
@@ -1223,6 +1693,9 @@ func (a *App) ExportCSV(path string) (string, error) {
 			fmt.Sprintf("%.2f", r.Delay),
 			fmt.Sprintf("%.2f", r.Speed),
 			r.Colo,
+			e2eBest,
+			e2eCold,
+			e2eStatus,
 		})
 	}
 	w.Flush()
@@ -1455,6 +1928,12 @@ func (a *App) InstallUpdate(path string) error {
 // ---------------------------------------------------------------------------
 
 func configDir() string {
+	// 测试/便携场景可以用 CFSTX_CONFIG_DIR 覆盖，
+	// 避免集成测试写进用户真实的 config.json / history.json。
+	if dir := strings.TrimSpace(os.Getenv("CFSTX_CONFIG_DIR")); dir != "" {
+		_ = os.MkdirAll(dir, 0o755)
+		return dir
+	}
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		dir = "."
@@ -1466,6 +1945,84 @@ func configDir() string {
 
 func (a *App) configPath() string  { return filepath.Join(configDir(), "config.json") }
 func (a *App) historyPath() string { return filepath.Join(configDir(), "history.json") }
+
+// e2eSecretsPath 是端到端凭据的独立存储。
+// 为什么不放进 config.json：UUID/口令/WS 路径等同于访问凭据，
+// 而 config.json 会被历史记录、导出、日志路径引用，混在一起容易泄露。
+func (a *App) e2eSecretsPath() string { return filepath.Join(configDir(), "e2e_secrets.json") }
+
+// poolPath 是历史优质 IP 池。
+func (a *App) poolPath() string { return filepath.Join(configDir(), "ip_pool.json") }
+
+// GetPoolCount 返回池里有效的条目数。
+func (a *App) GetPoolCount() int {
+	return task.LoadIPPool(a.poolPath()).Count()
+}
+
+// ClearPool 清空历史优质 IP。
+func (a *App) ClearPool() error {
+	err := os.Remove(a.poolPath())
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+// E2ECredentials 是端到端探测所需的敏感信息。
+type E2ECredentials struct {
+	UUID     string `json:"uuid,omitempty"`
+	Password string `json:"password,omitempty"`
+	WSPath   string `json:"wsPath,omitempty"`
+}
+
+// E2ECredentialStatus 只回显「有没有」，不回显内容。
+type E2ECredentialStatus struct {
+	HasUUID     bool `json:"hasUuid"`
+	HasPassword bool `json:"hasPassword"`
+	HasPath     bool `json:"hasPath"`
+}
+
+func (a *App) readE2ECredentials() E2ECredentials {
+	var c E2ECredentials
+	_ = readJSONFile(a.e2eSecretsPath(), &c)
+	return c
+}
+
+// SaveE2ECredentials 合并保存：空字段表示不修改。
+func (a *App) SaveE2ECredentials(patch E2ECredentials) error {
+	cur := a.readE2ECredentials()
+	if strings.TrimSpace(patch.UUID) != "" {
+		cur.UUID = strings.TrimSpace(patch.UUID)
+	}
+	if strings.TrimSpace(patch.Password) != "" {
+		cur.Password = strings.TrimSpace(patch.Password)
+	}
+	if strings.TrimSpace(patch.WSPath) != "" {
+		cur.WSPath = strings.TrimSpace(patch.WSPath)
+	}
+	data, err := json.MarshalIndent(cur, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(a.e2eSecretsPath(), data, 0o600)
+}
+
+func (a *App) ClearE2ECredentials() error {
+	err := os.Remove(a.e2eSecretsPath())
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func (a *App) GetE2ECredentialStatus() E2ECredentialStatus {
+	c := a.readE2ECredentials()
+	return E2ECredentialStatus{
+		HasUUID:     c.UUID != "",
+		HasPassword: c.Password != "",
+		HasPath:     c.WSPath != "",
+	}
+}
 
 func readJSONFile(path string, v any) error {
 	data, err := os.ReadFile(path)

@@ -22,7 +22,7 @@ const config = ref({
   colo: '',
   probeEnabled: false,
   probeDomain: '',
-  maxDelay: 200,
+  maxDelay: 9999,
   minDelay: 0,
   maxLossRate: 1.0,
   minSpeed: 5,
@@ -34,7 +34,28 @@ const config = ref({
   outputFile: 'result.csv',
   printNum: 10,
   debug: false,
+  e2eEnabled: false,
+  e2eProtocol: 'vless',
+  e2eHost: '',
+  e2ePort: 443,
+  e2eTarget: 'http://cp.cloudflare.com/generate_204',
+  e2eConcurrency: 16,
+  e2eRetries: 3,
+  e2eMaxLatency: 3000,
+  e2eLimit: 150,
+  e2eInsecure: false,
+  poolEnabled: true,
+  poolLimit: 200,
+  coarseEnabled: true,
+  coarseLimit: 60,
+  coarseTimeout: 1500,
+  countryFilter: [],
 })
+
+// 端到端凭据与 config 分开：不随 /api/config 持久化，只随启动请求提交。
+const e2eSecrets = ref({ uuid: '', password: '', wsPath: '' })
+const e2eCredStatus = ref({ hasUuid: false, hasPassword: false, hasPath: false })
+const poolCount = ref(0)
 
 const running = ref(false)
 const phase = ref('idle') // idle | fetch | ping | download | done
@@ -175,6 +196,8 @@ const phaseLabel = computed(() => {
     case 'fetch': return '获取在线 IP 中'
     case 'probe': return '域名探测中'
     case 'ping': return '延迟测速中'
+    case 'e2e': return '端到端测速中'
+    case 'coarse': return '粗排测速中'
     case 'download': return '下载测速中'
     case 'done': return '测速完成'
     default: return '就绪'
@@ -186,6 +209,8 @@ const phaseColor = computed(() => {
     case 'fetch': return 'info'
     case 'probe': return 'warning'
     case 'ping': return 'primary'
+    case 'e2e': return 'deep-purple'
+    case 'coarse': return 'orange'
     case 'download': return 'secondary'
     case 'done': return 'success'
     default: return 'grey'
@@ -228,8 +253,33 @@ function stopTimer() {
 async function loadConfig() {
   try {
     const c = await httpGet('/api/config')
-    if (c) config.value = c
+    if (c) {
+      // 旧存档没有 countryFilter，补成空数组，避免 v-select multiple 拿到 undefined。
+      config.value = { ...c, countryFilter: Array.isArray(c.countryFilter) ? c.countryFilter : [] }
+    }
   } catch (_) { /* 忽略 */ }
+}
+
+async function loadE2ECredStatus() {
+  try {
+    e2eCredStatus.value = await httpGet('/api/e2e/credentials')
+  } catch (_) { /* 忽略 */ }
+}
+
+async function loadPoolStatus() {
+  try {
+    poolCount.value = (await httpGet('/api/pool/status'))?.count || 0
+  } catch (_) { /* 忽略 */ }
+}
+
+async function clearPool() {
+  try {
+    await httpDelete('/api/pool')
+    await loadPoolStatus()
+    toast('已清空历史优质 IP', 'info')
+  } catch (e) {
+    toast(String(e), 'error')
+  }
 }
 
 async function loadHistory() {
@@ -256,7 +306,7 @@ async function resetConfig() {
 // 场景预设
 // ---------------------------------------------------------------------------
 
-const PRESET_LABELS = { beginner: '新手推荐', worker: 'Worker 专用', fast: '极速扫描' }
+const PRESET_LABELS = { beginner: '新手推荐', worker: 'Worker 专用', fast: '极速扫描', e2e: '客户端口径' }
 
 // 只覆盖测速策略相关字段，保留用户已填的域名、文件路径、端口等
 const PRESET_CONFIGS = {
@@ -292,6 +342,22 @@ const PRESET_CONFIGS = {
     disableDownload: true,
     probeEnabled: false,
     testCount: 10,
+  },
+  // 与 Clash/V2RayN 一致：L1 只做粗筛，最终以端到端延迟为准。
+  e2e: {
+    sources: ['ipv4', 'bestcf', 'official'],
+    httping: true,
+    maxDelay: 9999,
+    minDelay: 0,
+    maxLossRate: 1,
+    minSpeed: 0,
+    disableDownload: false,
+    probeEnabled: true,
+    testCount: 10,
+    e2eEnabled: true,
+    e2eLimit: 150,
+    e2eMaxLatency: 3000,
+    coarseEnabled: true,
   },
 }
 
@@ -338,7 +404,10 @@ async function doStart() {
   progress.value = { current: 0, total: 0, available: 0, ip: '', port: 0, speed: 0, msg: '' }
   startTimer()
   try {
-    await httpPost('/api/test/start', config.value)
+    await httpPost('/api/test/start', {
+      config: config.value,
+      secrets: e2eSecrets.value,
+    })
   } catch (e) {
     toast(String(e), 'error')
     running.value = false
@@ -490,7 +559,19 @@ async function pickIpFile() {
 }
 
 function loadRecord(rec) {
-  config.value = { ...rec.config }
+  config.value = {
+    e2eEnabled: false,
+    e2eProtocol: 'vless',
+    e2eHost: '',
+    e2ePort: 443,
+    e2eTarget: 'http://cp.cloudflare.com/generate_204',
+    e2eConcurrency: 16,
+    e2eRetries: 3,
+    e2eMaxLatency: 3000,
+    e2eLimit: 100,
+    e2eInsecure: false,
+    ...rec.config,
+  }
   results.value = rec.results || []
   phase.value = 'done'
   historyOpen.value = false
@@ -599,6 +680,16 @@ async function installUpdate() {
 // SSE 事件
 // ---------------------------------------------------------------------------
 
+function compareResultItems(a, b) {
+  const ae = a?.e2e
+  const be = b?.e2e
+  const aok = ae?.tested && ae?.ok
+  const bok = be?.tested && be?.ok
+  if (aok !== bok) return aok ? -1 : 1
+  if (aok && bok && ae.best !== be.best) return ae.best - be.best
+  return (b.speed || 0) - (a.speed || 0)
+}
+
 function handleEvent(event, data) {
   switch (event) {
     case 'test:started':
@@ -648,6 +739,28 @@ function handleEvent(event, data) {
           speed: 0,
           msg: '',
         }
+      } else if (data.stage === 'e2e') {
+        phase.value = 'e2e'
+        progress.value = {
+          current: data.current,
+          total: data.total,
+          available: data.available || 0,
+          ip: data.ip || '',
+          port: data.port || 0,
+          speed: 0,
+          msg: data.msg || '',
+        }
+      } else if (data.stage === 'coarse') {
+        phase.value = 'coarse'
+        progress.value = {
+          current: data.current,
+          total: data.total,
+          available: 0,
+          ip: data.ip || '',
+          port: data.port || 0,
+          speed: data.speed || 0,
+          msg: '',
+        }
       } else {
         phase.value = 'download'
         progress.value = {
@@ -663,8 +776,8 @@ function handleEvent(event, data) {
       break
 
     case 'test:result':
-      // 每测完一个达标的 IP 就插入列表，按速度降序保持有序
-      results.value = [...results.value, data].sort((a, b) => b.speed - a.speed)
+      // 有端到端的按真实延迟升序；没有则按速度降序。
+      results.value = [...results.value, data].sort(compareResultItems)
       break
 
     case 'test:phase':
@@ -865,6 +978,8 @@ async function restoreProxyIPState() {
 onMounted(async () => {
   bindEvents()
   await loadConfig()
+  await loadE2ECredStatus()
+  await loadPoolStatus()
   await loadHistory()
   await restoreRunState()
   await restoreProxyIPState()
@@ -1061,6 +1176,9 @@ onBeforeUnmount(() => {
         <!-- 设置 -->
         <ConfigPanel
           v-model:config="config"
+          v-model:secrets="e2eSecrets"
+          :e2e-cred-status="e2eCredStatus"
+          :pool-count="poolCount"
           :running="running"
           :fetch-status="fetchStatus"
           @pick-ip-file="pickIpFile"
@@ -1069,6 +1187,7 @@ onBeforeUnmount(() => {
           @open-cfdomains="openCFDomains"
           @apply-preset="applyPreset"
           @fetch-sources="fetchSources"
+          @clear-pool="clearPool"
         />
 
         <!-- 结果 -->
@@ -1079,7 +1198,8 @@ onBeforeUnmount(() => {
           :stability="stabilityResults"
           :stability-running="stabilityRunning"
           :stability-progress="stabilityProgress"
-          :default-domain="config.probeDomain"
+          :default-domain="config.probeDomain || config.e2eHost"
+          :e2e-max-latency="config.e2eMaxLatency"
           @export="exportCsv"
           @export-txt="exportTxt"
           @copied="handleCopied"

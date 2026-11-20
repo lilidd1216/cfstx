@@ -511,15 +511,12 @@ func parseOfficialCIDR(body string, allowIPv6 bool) []string {
 // fetchCIDRTargets 抓取 CIDR 源并展开成测速目标。
 // 每个 CIDR 段按其下的 /24 子段各随机取一个 IP，避免展开出几万个地址。
 func fetchCIDRTargets(client *bestCFClient, opts FetchOptions, report func(done, total int, msg string)) []*Target {
-	ranges := newIPRanges()
-	ranges.port = opts.DefaultPort
+	var cidrs []string
 
 	if opts.IncludeOfficialCIDR {
 		report(0, 0, "正在读取 Cloudflare 官方 IP 段…")
 		if body, err := client.get(officialCIDRAPI); err == nil {
-			for _, cidr := range parseOfficialCIDR(body, opts.AllowIPv6) {
-				ranges.addLine(cidr, opts.DefaultPort)
-			}
+			cidrs = append(cidrs, parseOfficialCIDR(body, opts.AllowIPv6)...)
 		} else {
 			report(0, 0, "Cloudflare 官方 IP 段读取失败，已跳过")
 		}
@@ -530,17 +527,22 @@ func fetchCIDRTargets(client *bestCFClient, opts FetchOptions, report func(done,
 		if body, err := client.get(cmliuCIDRURL); err == nil {
 			for _, line := range strings.Split(body, "\n") {
 				line = strings.TrimSpace(line)
-				if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
+				if !isCIDRLine(line) {
 					continue
 				}
-				ranges.addLine(line, opts.DefaultPort)
+				cidrs = append(cidrs, line)
 			}
 		} else {
 			report(0, 0, "cmliu CF-CIDR 读取失败，已跳过")
 		}
 	}
 
-	return ranges.ips
+	// 按「网段大小 × 实测可用率」分配采样预算，把候选集中到真正能用的段。
+	targets := expandCIDRsWeighted(cidrs, opts.DefaultPort)
+	if len(targets) > 0 {
+		report(0, 0, fmt.Sprintf("按网段可用率加权采样：%d 个目标", len(targets)))
+	}
+	return targets
 }
 
 // FetchOnlineTargets 抓取所有启用的在线来源，解析出 IP 与端口。
