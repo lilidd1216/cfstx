@@ -287,20 +287,28 @@ func (a *API) handleAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, a.app.GetResults())
 
 	case path == "/api/export" && r.Method == http.MethodPost:
-		path, err := a.app.ExportCSV("")
+		var req struct {
+			Order []string `json:"order"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		filePath, err := a.app.ExportCSV("", req.Order)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		writeJSON(w, map[string]string{"path": path})
+		writeJSON(w, map[string]string{"path": filePath})
 
 	case path == "/api/export/txt" && r.Method == http.MethodPost:
-		path, err := a.app.ExportTXT("")
+		var req struct {
+			Order []string `json:"order"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		filePath, err := a.app.ExportTXT("", req.Order)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		writeJSON(w, map[string]string{"path": path})
+		writeJSON(w, map[string]string{"path": filePath})
 
 	case path == "/api/export/log" && r.Method == http.MethodPost:
 		path, err := a.app.ExportLog("")

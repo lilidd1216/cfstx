@@ -1649,10 +1649,43 @@ func (a *App) GetResults() []ResultItem {
 	return a.resultsOrEmpty()
 }
 
+// orderResults 按前端当前展示顺序（评分排序）重排结果。
+// order 是 "ip:port" 列表；不在列表里的结果保持原顺序排在后面。
+func orderResults(results []ResultItem, order []string) []ResultItem {
+	if len(order) == 0 || len(results) <= 1 {
+		return results
+	}
+	index := make(map[string]int, len(order))
+	for i, k := range order {
+		if _, ok := index[k]; !ok {
+			index[k] = i
+		}
+	}
+	out := append([]ResultItem(nil), results...)
+	sort.SliceStable(out, func(i, j int) bool {
+		ki := fmt.Sprintf("%s:%d", out[i].IP, out[i].Port)
+		kj := fmt.Sprintf("%s:%d", out[j].IP, out[j].Port)
+		ii, iok := index[ki]
+		jj, jok := index[kj]
+		switch {
+		case iok && jok:
+			return ii < jj
+		case iok:
+			return true
+		case jok:
+			return false
+		default:
+			return false
+		}
+	})
+	return out
+}
+
 // ExportCSV 导出结果。path 为空时写入当前目录的 result.csv。
-func (a *App) ExportCSV(path string) (string, error) {
+// order 非空时按前端展示顺序导出。
+func (a *App) ExportCSV(path string, order []string) (string, error) {
 	a.mu.Lock()
-	results := a.results
+	results := orderResults(a.results, order)
 	a.mu.Unlock()
 
 	if len(results) == 0 {
@@ -1705,10 +1738,11 @@ func (a *App) ExportCSV(path string) (string, error) {
 	return abs, nil
 }
 
-// ExportTXT 以「IP:端口#备注」格式导出结果，可直接作为 IP 列表再次使用。
-func (a *App) ExportTXT(path string) (string, error) {
+// ExportTXT 以「IP:端口#中文地区 速度」格式导出结果，可直接作为 IP 列表再次使用。
+// order 非空时按前端展示顺序导出。
+func (a *App) ExportTXT(path string, order []string) (string, error) {
 	a.mu.Lock()
-	results := a.results
+	results := orderResults(a.results, order)
 	a.mu.Unlock()
 
 	if len(results) == 0 {
@@ -1727,11 +1761,7 @@ func (a *App) ExportTXT(path string) (string, error) {
 		if port <= 0 || port > 65535 {
 			port = 443
 		}
-		colo := r.Colo
-		if colo == "" {
-			colo = "N/A"
-		}
-		fmt.Fprintf(&b, "%s:%d#%s %.2fMB/s\n", r.IP, port, colo, r.Speed)
+		fmt.Fprintf(&b, "%s:%d#%s %.2fMB/s\n", r.IP, port, task.ColoLabel(r.Colo), r.Speed)
 	}
 
 	if err := os.WriteFile(abs, []byte(b.String()), 0o644); err != nil {

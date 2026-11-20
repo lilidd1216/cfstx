@@ -526,18 +526,18 @@ async function stopStability() {
   }
 }
 
-async function exportCsv() {
+async function exportCsv(order) {
   try {
-    const res = await httpPost('/api/export')
+    const res = await httpPost('/api/export', { order })
     toast('已导出到 ' + res.path, 'success')
   } catch (e) {
     toast(String(e), 'error')
   }
 }
 
-async function exportTxt() {
+async function exportTxt(order) {
   try {
-    const res = await httpPost('/api/export/txt')
+    const res = await httpPost('/api/export/txt', { order })
     toast('已导出到 ' + res.path, 'success')
   } catch (e) {
     toast(String(e), 'error')

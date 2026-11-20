@@ -81,3 +81,20 @@ func TestParseE2EColo(t *testing.T) {
 		}
 	}
 }
+
+func TestColoLabel(t *testing.T) {
+	cases := []struct{ colo, want string }{
+		{"HKG", "香港"},
+		{"LAX", "洛杉矶"},
+		{"NRT", "东京"},
+		{"hkg", "香港"},
+		{"", "N/A"},
+		{"N/A", "N/A"},
+		{"XYZ", "XYZ"},
+	}
+	for _, c := range cases {
+		if got := ColoLabel(c.colo); got != c.want {
+			t.Fatalf("ColoLabel(%q) = %q，期望 %q", c.colo, got, c.want)
+		}
+	}
+}

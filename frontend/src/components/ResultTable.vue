@@ -207,6 +207,11 @@ const scored = computed(() => {
   })
 })
 
+// 导出时把当前展示顺序（评分排序）带给后端，保证文件顺序与界面一致。
+function emitOrdered(name) {
+  emit(name, scored.value.map((r) => keyOf(r)))
+}
+
 const maxSpeed = computed(() => Math.max(...props.results.map((r) => r.speed), 1))
 
 // 综合评分最高的 3 个，在表格中标记为「推荐」。
@@ -510,7 +515,7 @@ async function copyClashScript() {
         size="small"
         prepend-icon="mdi-file-delimited-outline"
         :disabled="!results.length"
-        @click="emit('export')"
+        @click="emitOrdered('export')"
       >
         导出 CSV
       </v-btn>
@@ -520,7 +525,7 @@ async function copyClashScript() {
         prepend-icon="mdi-file-document-outline"
         :disabled="!results.length"
         class="ml-2"
-        @click="emit('export-txt')"
+        @click="emitOrdered('export-txt')"
       >
         导出 TXT
       </v-btn>
