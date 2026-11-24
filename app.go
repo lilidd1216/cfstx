@@ -223,6 +223,9 @@ type App struct {
 	domDone    int
 	domTotal   int
 	domResults []task.DomainResult
+
+	// 定时自动优选 + 推送 edgetunnel 面板（仅 GUI 模式启用）
+	auto *AutoScheduler
 }
 
 // appendLog 追加一条运行日志（最多保留最近 5000 条）。
@@ -242,7 +245,9 @@ func (a *App) appendLog(level, stage, msg string) {
 
 // NewApp 创建应用实例。
 func NewApp() *App {
-	return &App{phase: "idle"}
+	a := &App{phase: "idle"}
+	a.auto = NewAutoScheduler(a)
+	return a
 }
 
 // SetHub 注入事件中心。
@@ -256,8 +261,11 @@ func (a *App) emit(event string, data any) {
 	}
 }
 
-// Shutdown 在窗口关闭时停止正在进行的测速。
+// Shutdown 在窗口关闭时停止调度器与正在进行的测速。
 func (a *App) Shutdown() {
+	if a.auto != nil {
+		a.auto.Stop()
+	}
 	task.Cancel()
 }
 
@@ -369,8 +377,8 @@ func normalizeConfig(cfg Config) Config {
 	if cfg.CoarseLimit <= 0 {
 		cfg.CoarseLimit = 60
 	}
-	if cfg.CoarseLimit > 500 {
-		cfg.CoarseLimit = 500
+	if cfg.CoarseLimit > 50000 {
+		cfg.CoarseLimit = 50000
 	}
 	if cfg.CoarseTimeout <= 0 {
 		cfg.CoarseTimeout = 1500
@@ -570,9 +578,20 @@ func (a *App) ResetConfig() Config {
 
 // StartTest 启动一次测速。进度通过 test:* 事件推送。
 func (a *App) StartTest(cfg Config) error {
-	// 稳定性测试和主测速互斥：两者都会打满并发连接，
-	// 同时跑会互相干扰，测出来的数字都没意义。
-	// 锁顺序固定为 stabMu → mu，避免与 StartStability 交叉加锁死锁。
+	cfg = normalizeConfig(cfg)
+	if err := a.beginTest(cfg); err != nil {
+		return err
+	}
+	_ = writeFileJSON(a.configPath(), cfg)
+	go a.runTest(cfg)
+	return nil
+}
+
+// beginTest 完成测速前的互斥检查与状态初始化，供手动测速和定时任务共用。
+//
+// 稳定性测试和主测速互斥：两者都会打满并发连接，同时跑会互相干扰，
+// 测出来的数字都没意义。锁顺序固定为 stabMu → mu，避免交叉加锁死锁。
+func (a *App) beginTest(cfg Config) error {
 	a.stabMu.Lock()
 	stabBusy := a.stabRunning
 	a.stabMu.Unlock()
@@ -581,13 +600,11 @@ func (a *App) StartTest(cfg Config) error {
 	}
 
 	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.running {
-		a.mu.Unlock()
 		return fmt.Errorf("测速正在进行中，请先停止")
 	}
-	cfg = normalizeConfig(cfg)
 	if err := a.validateE2EForStart(cfg); err != nil {
-		a.mu.Unlock()
 		return fmt.Errorf("端到端配置有误：%w", err)
 	}
 	a.running = true
@@ -595,10 +612,6 @@ func (a *App) StartTest(cfg Config) error {
 	a.results = nil
 	a.logs = nil
 	a.progress = ProgressInfo{}
-	a.mu.Unlock()
-
-	_ = writeFileJSON(a.configPath(), cfg)
-	go a.runTest(cfg)
 	return nil
 }
 
@@ -953,7 +966,24 @@ func (a *App) resultsOrEmpty() []ResultItem {
 	return a.results
 }
 
+// testOptions 控制一次测速的副作用。定时自动同步使用 autoTestOptions，
+// 避免覆盖用户手动测速产出的 CSV 和历史记录。
+type testOptions struct {
+	writeCSV      bool
+	appendHistory bool
+}
+
+var manualTestOptions = testOptions{writeCSV: true, appendHistory: true}
+var autoTestOptions = testOptions{writeCSV: false, appendHistory: false}
+
+// runTest 是手动测速的入口，保持原有调用方式。
 func (a *App) runTest(cfg Config) {
+	_, _ = a.runTestWithOptions(cfg, manualTestOptions)
+}
+
+// runTestWithOptions 执行一次完整测速并返回最终结果。
+// error 仅在任务被取消时非 nil；结果为空属于正常完成。
+func (a *App) runTestWithOptions(cfg Config, opts testOptions) ([]ResultItem, error) {
 	// 兜底归一化：API 层已经做过，但集成测试/CLI 可能直接调用。
 	// 不补这一步时，HTTPing 模式的 URL 为空会让所有 IP 失败。
 	cfg = normalizeConfig(cfg)
@@ -1056,7 +1086,7 @@ func (a *App) runTest(cfg Config) {
 					"results":  []ResultItem{},
 					"duration": time.Since(start).Seconds(),
 				})
-				return
+				return nil, task.ErrCancelled
 			case err != nil:
 				task.ExtraTargets = nil
 				a.emit("test:log", task.LogEvent{Level: "warn", Msg: "在线优选 IP 获取失败：" + err.Error()})
@@ -1106,7 +1136,7 @@ func (a *App) runTest(cfg Config) {
 				"duration":  time.Since(start).Seconds(),
 				"diagnosis": d,
 			})
-			return
+			return nil, nil
 		}
 		if probeDomain != strings.TrimSpace(cfg.ProbeDomain) {
 			a.appendLog("info", "probe", fmt.Sprintf(
@@ -1152,7 +1182,7 @@ func (a *App) runTest(cfg Config) {
 				"duration":  time.Since(start).Seconds(),
 				"diagnosis": d,
 			})
-			return
+			return nil, nil
 		}
 	} else {
 		probePassed = -1 // 未启用探测
@@ -1308,7 +1338,7 @@ func (a *App) runTest(cfg Config) {
 					"duration":  time.Since(start).Seconds(),
 					"diagnosis": d,
 				})
-				return
+				return nil, nil
 			}
 		}
 	}
@@ -1372,7 +1402,7 @@ func (a *App) runTest(cfg Config) {
 	a.phase = "done"
 	a.mu.Unlock()
 
-	if cfg.OutputFile != "" {
+	if opts.writeCSV && cfg.OutputFile != "" {
 		utils.Output = cfg.OutputFile
 		utils.ExportCsv(speedData)
 	}
@@ -1390,7 +1420,9 @@ func (a *App) runTest(cfg Config) {
 		rec.BestIP = results[0].IP
 		rec.BestSpeed = results[0].Speed
 	}
-	a.appendHistory(rec)
+	if opts.appendHistory {
+		a.appendHistory(rec)
+	}
 
 	finished := map[string]any{
 		"results":  results,
@@ -1403,6 +1435,7 @@ func (a *App) runTest(cfg Config) {
 		a.appendLog("warn", "diagnosis", d.Reason+"；建议："+d.Suggestion)
 	}
 	a.emit("test:finished", finished)
+	return results, nil
 }
 
 // applyConfig 把界面配置写入 task/utils 的全局参数。

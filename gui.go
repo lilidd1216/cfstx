@@ -73,6 +73,10 @@ func runGUI(assets embed.FS) error {
 			Title:  "CFSTX",
 			Width:  1360,
 			Height: 900,
+			// 使用 rsrc_windows_amd64.syso 中 cfstx.ico 的资源 ID（默认为 1）。
+			// 注意：构建后必须执行 build.ps1 里的 icacls 提升完整性级别，
+			// 否则 WebView2 在低完整性进程下创建控制器会失败。
+			IconId: 1,
 		},
 	})
 	if w == nil {
@@ -88,7 +92,24 @@ func runGUI(assets embed.FS) error {
 	}()
 	defer srv.Close()
 
-	// 第三步：加载页面并进入消息循环
+	// 第三步：安装托盘。之后关闭窗口只隐藏到托盘，从托盘菜单
+	// 「退出程序」才真正结束进程，保证定时任务能在后台常驻。
+	// 初始化失败时保持「关闭即退出」的原始行为，不影响主功能。
+	hwnd := uintptr(w.Window())
+	if tr, err := installTray(hwnd, 1, trayHandlers{
+		OnExit: func() { w.Terminate() },
+	}); err != nil {
+		app.appendLog("warn", "tray", "托盘初始化失败，关闭窗口将直接退出："+err.Error())
+	} else {
+		defer tr.remove()
+	}
+
+	// 启动定时自动同步。runServe 模式不启动，避免自动化测试误推送。
+	if app.auto != nil {
+		app.auto.Start()
+	}
+
+	// 第四步：加载页面并进入消息循环
 	w.Navigate("http://" + addr)
 	w.Run()
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -9,7 +10,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
+	"gitee.com/liliaic/cfstx/task"
 	"gitee.com/liliaic/cfstx/version"
 )
 
@@ -143,6 +146,102 @@ func (a *API) handleAPI(w http.ResponseWriter, r *http.Request) {
 		// 只回显「有没有」，不回显内容；禁止缓存。
 		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, a.app.GetE2ECredentialStatus())
+
+	case path == "/api/e2e/credentials/reveal" && r.Method == http.MethodPost:
+		// 仅供本机界面重启后回填输入框使用。接口绑定在 127.0.0.1，
+		// 与 /api/test/start 接收明文凭据的信任边界一致。
+		w.Header().Set("Cache-Control", "no-store")
+		creds := a.app.readE2ECredentials()
+		writeJSON(w, map[string]string{
+			"uuid":     creds.UUID,
+			"password": creds.Password,
+			"wsPath":   creds.WSPath,
+		})
+
+	case path == "/api/e2e/credentials/from-panel" && r.Method == http.MethodPost:
+		// 从 edgetunnel 面板的 config.json 自动读取 UUID / WS 路径。
+		var body struct {
+			PanelURL  string `json:"panelUrl"`
+			UserAgent string `json:"userAgent"`
+			Password  string `json:"password"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+
+		if body.PanelURL == "" || body.UserAgent == "" || body.Password == "" {
+			cfg := a.app.GetAutoSyncConfig()
+			if body.PanelURL == "" {
+				body.PanelURL = cfg.PanelURL
+			}
+			if body.UserAgent == "" {
+				body.UserAgent = cfg.UserAgent
+			}
+			if body.Password == "" {
+				body.Password = a.app.readPanelPassword()
+			}
+		}
+		if strings.TrimSpace(body.PanelURL) == "" {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("请先在「自动同步」页填写 edgetunnel 面板地址"))
+			return
+		}
+		if body.Password == "" {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("请先在「自动同步」页填写面板管理员密码"))
+			return
+		}
+
+		client, err := task.NewPanelClient(body.PanelURL, body.UserAgent)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		if err := client.Login(ctx, body.Password); err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+		cfgMap, err := client.ReadConfig(ctx)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+
+		uuid := panelStr(cfgMap, "UUID")
+		wsPath := panelStr(cfgMap, "完整节点路径")
+		if wsPath == "" {
+			wsPath = panelStr(cfgMap, "PATH")
+		}
+		protocol := strings.ToLower(panelStr(cfgMap, "协议类型"))
+		host := panelStr(cfgMap, "HOST")
+
+		if uuid == "" {
+			writeError(w, http.StatusBadGateway, fmt.Errorf("面板配置里没有找到 UUID"))
+			return
+		}
+		if protocol != "vless" && protocol != "trojan" {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("面板协议为 %s，端到端测速仅支持 VLESS / Trojan", protocol))
+			return
+		}
+
+		password := ""
+		patch := E2ECredentials{UUID: uuid, WSPath: wsPath}
+		if protocol == "trojan" {
+			// edgetunnel 的 Trojan 口令就是 UUID。
+			password = uuid
+			patch.Password = uuid
+		}
+		if err := a.app.SaveE2ECredentials(patch); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+
+		writeJSON(w, map[string]any{
+			"uuid":     uuid,
+			"password": password,
+			"wsPath":   wsPath,
+			"protocol": protocol,
+			"host":     host,
+			"port":     443,
+		})
 
 	case path == "/api/e2e/credentials" && r.Method == http.MethodPost:
 		var c E2ECredentials
@@ -350,9 +449,10 @@ func (a *API) handleAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]bool{"ok": true})
 
 	case path == "/api/version" && r.Method == http.MethodGet:
+		// 只返回本地版本号。更新检查走 /api/update/check，
+		// 避免上游网络不通时这个高频接口被阻塞十几秒。
 		writeJSON(w, map[string]string{
 			"version": a.app.GetVersion(),
-			"latest":  a.app.CheckUpdate(),
 		})
 
 	case path == "/api/update/check" && r.Method == http.MethodGet:
@@ -406,6 +506,101 @@ func (a *API) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := a.app.InstallUpdate(body.Path); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+
+	// ---- 定时自动优选 + 推送 edgetunnel 面板 ----
+	case path == "/api/autosync/config" && r.Method == http.MethodGet:
+		writeJSON(w, a.app.GetAutoSyncConfig())
+
+	case path == "/api/autosync/config" && r.Method == http.MethodPost:
+		var body struct {
+			Config   AutoSyncConfig `json:"config"`
+			Password string         `json:"password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := a.app.SaveAutoSync(body.Config, body.Password); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "status": a.app.GetAutoSyncStatus()})
+
+	case path == "/api/autosync/status" && r.Method == http.MethodGet:
+		writeJSON(w, a.app.GetAutoSyncStatus())
+
+	case path == "/api/autosync/reveal" && r.Method == http.MethodPost:
+		// 仅供本机界面重启后回填密码，绑定在 127.0.0.1。
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, map[string]string{"password": a.app.readPanelPassword()})
+
+	case path == "/api/autosync/run" && r.Method == http.MethodPost:
+		// 允许先应用界面上的当前配置，避免用户没点「保存」就点「立即同步」。
+		var body struct {
+			Config   *AutoSyncConfig `json:"config"`
+			Password string          `json:"password"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Config != nil {
+			if err := a.app.SaveAutoSync(*body.Config, body.Password); err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+		}
+		if err := a.app.auto.RunNow(); err != nil {
+			writeError(w, http.StatusConflict, err)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+
+	case path == "/api/autosync/test-panel" && r.Method == http.MethodPost:
+		var body struct {
+			PanelURL  string `json:"panelUrl"`
+			UserAgent string `json:"userAgent"`
+			Password  string `json:"password"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		// 优先使用界面当前填写的内容，未填写时才回退到已保存配置，
+		// 这样用户不点「保存」也能先测试连接。
+		panelURL := strings.TrimSpace(body.PanelURL)
+		userAgent := strings.TrimSpace(body.UserAgent)
+		password := body.Password
+		if panelURL == "" || userAgent == "" || password == "" {
+			cfg := a.app.GetAutoSyncConfig()
+			if panelURL == "" {
+				panelURL = cfg.PanelURL
+			}
+			if userAgent == "" {
+				userAgent = cfg.UserAgent
+			}
+			if password == "" {
+				password = a.app.readPanelPassword()
+			}
+		}
+		if panelURL == "" {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("尚未填写面板地址"))
+			return
+		}
+		client, err := task.NewPanelClient(panelURL, userAgent)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		ready, err := client.Preflight(ctx, password)
+		cancel()
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": len(ready.Warnings) == 0, "readiness": ready})
+
+	case path == "/api/autosync" && r.Method == http.MethodDelete:
+		if err := a.app.ClearAutoSync(); err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -473,6 +668,19 @@ func writeError(w http.ResponseWriter, code int, err error) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+}
+
+// panelStr 从面板配置 map 中读取字符串字段，缺失或类型不符时返回空。
+func panelStr(m map[string]any, key string) string {
+	if m == nil {
+		return ""
+	}
+	if v, ok := m[key]; ok {
+		if s, ok := v.(string); ok {
+			return strings.TrimSpace(s)
+		}
+	}
+	return ""
 }
 
 // openExternalURL 用系统默认浏览器打开链接。

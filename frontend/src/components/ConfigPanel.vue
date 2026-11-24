@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import { countryOptions } from '../constants/countries.js'
 
 const config = defineModel('config', { type: Object, required: true })
 // 端到端凭据单独走一个 model，不混进 config，避免被一起持久化。
@@ -16,10 +17,12 @@ const props = defineProps({
   poolCount: { type: Number, default: 0 },
   // 在线 IP 抓取状态：由 App 统一维护，这里只负责展示
   fetchStatus: { type: Object, default: () => ({ fetching: false, total: 0, time: '' }) },
+  // 从面板自动获取端到端凭据时的加载状态
+  fetchingE2E: { type: Boolean, default: false },
 })
 const emit = defineEmits([
   'pick-ip-file', 'open-bestcf', 'open-cmliu', 'open-cfdomains', 'apply-preset',
-  'fetch-sources', 'clear-pool',
+  'fetch-sources', 'clear-pool', 'fetch-e2e-from-panel',
 ])
 
 const disabled = computed(() => props.running)
@@ -34,58 +37,7 @@ const targets = [
   'http://www.gstatic.com/generate_204',
 ]
 
-// 国家/地区选项。value 是 ISO 3166-1 两位代码，必须与后端 task.CountryNames 一致。
-const countryOptions = [
-  { value: 'HK', title: '香港' },
-  { value: 'TW', title: '台湾' },
-  { value: 'JP', title: '日本' },
-  { value: 'KR', title: '韩国' },
-  { value: 'SG', title: '新加坡' },
-  { value: 'US', title: '美国' },
-  { value: 'CA', title: '加拿大' },
-  { value: 'GB', title: '英国' },
-  { value: 'DE', title: '德国' },
-  { value: 'FR', title: '法国' },
-  { value: 'NL', title: '荷兰' },
-  { value: 'AU', title: '澳大利亚' },
-  { value: 'IN', title: '印度' },
-  { value: 'MY', title: '马来西亚' },
-  { value: 'TH', title: '泰国' },
-  { value: 'PH', title: '菲律宾' },
-  { value: 'VN', title: '越南' },
-  { value: 'ID', title: '印度尼西亚' },
-  { value: 'BR', title: '巴西' },
-  { value: 'MX', title: '墨西哥' },
-  { value: 'AE', title: '阿联酋' },
-  { value: 'TR', title: '土耳其' },
-  { value: 'IT', title: '意大利' },
-  { value: 'ES', title: '西班牙' },
-  { value: 'SE', title: '瑞典' },
-  { value: 'PL', title: '波兰' },
-  { value: 'CH', title: '瑞士' },
-  { value: 'AT', title: '奥地利' },
-  { value: 'BE', title: '比利时' },
-  { value: 'DK', title: '丹麦' },
-  { value: 'NO', title: '挪威' },
-  { value: 'FI', title: '芬兰' },
-  { value: 'IE', title: '爱尔兰' },
-  { value: 'PT', title: '葡萄牙' },
-  { value: 'GR', title: '希腊' },
-  { value: 'CZ', title: '捷克' },
-  { value: 'HU', title: '匈牙利' },
-  { value: 'RO', title: '罗马尼亚' },
-  { value: 'BG', title: '保加利亚' },
-  { value: 'NZ', title: '新西兰' },
-  { value: 'AR', title: '阿根廷' },
-  { value: 'CL', title: '智利' },
-  { value: 'CO', title: '哥伦比亚' },
-  { value: 'PE', title: '秘鲁' },
-  { value: 'SA', title: '沙特' },
-  { value: 'QA', title: '卡塔尔' },
-  { value: 'IL', title: '以色列' },
-  { value: 'EG', title: '埃及' },
-  { value: 'ZA', title: '南非' },
-]
+// 国家/地区选项已抽取到 ../constants/countries.js，与自动同步面板共用同一份。
 
 // 把用户从地址栏粘来的 https://xxx/ 归一成纯 host
 function normalizeE2EHost() {
@@ -360,6 +312,20 @@ const customEnabled = computed(() => sources.value.includes('custom'))
             />
           </v-col>
         </v-row>
+        <div class="e2e-fetch-row">
+          <v-btn
+            size="small"
+            variant="tonal"
+            color="primary"
+            prepend-icon="mdi-cloud-download-outline"
+            :disabled="disabled || fetchingE2E"
+            :loading="fetchingE2E"
+            @click="emit('fetch-e2e-from-panel')"
+          >从面板自动获取</v-btn>
+          <span class="e2e-fetch-hint">
+            读取 edgetunnel 面板里的 UUID / WS 路径（需先在「自动同步」页填好面板地址和密码）
+          </span>
+        </div>
         <v-row dense>
           <v-col v-if="config.e2eProtocol === 'vless'" cols="12" sm="6" md="4">
             <v-text-field
@@ -880,6 +846,17 @@ const customEnabled = computed(() => sources.value.includes('custom'))
   background: #1b1b21 !important;
   border: 1px solid #2a2a33;
   padding: 16px 20px;
+}
+.e2e-fetch-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.e2e-fetch-hint {
+  font-size: 12px;
+  color: rgba(var(--v-theme-on-surface), 0.6);
 }
 
 .section-head {

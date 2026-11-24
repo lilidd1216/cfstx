@@ -8,6 +8,7 @@ import HistoryDialog from './components/HistoryDialog.vue'
 import OptimizePanel from './components/OptimizePanel.vue'
 import ProxyIPPanel from './components/ProxyIPPanel.vue'
 import DomainPanel from './components/DomainPanel.vue'
+import AutoSyncPanel from './components/AutoSyncPanel.vue'
 
 const config = ref({
   threads: 200,
@@ -92,6 +93,24 @@ const proxyIPState = ref({
   seconds: 0,
 })
 
+// 自动同步：配置、密码（永不回显）、运行状态
+const autoSyncConfig = ref({
+  enabled: false,
+  dailyTime: '03:00',
+  panelUrl: '',
+  userAgent: '',
+  filters: { speedTopN: 10, maxDelay: 0, countries: [], minSpeed: 0 },
+})
+const autoSyncPassword = ref('')
+const autoSyncStatus = ref({
+  enabled: false, running: false, dailyTime: '03:00',
+  nextRun: '', lastRun: '', lastStatus: 'never', lastError: '', lastWarn: '',
+  lastPushedCount: 0, lastPushed: [], hasPassword: false,
+})
+const autoSyncSaving = ref(false)
+const autoSyncTesting = ref(false)
+const e2eFetching = ref(false)
+
 // 切换页面时回到顶部：从较长的页面切过来时，滚动位置不会残留
 watch(currentPage, () => {
   window.scrollTo({ top: 0, behavior: 'auto' })
@@ -118,6 +137,7 @@ const navItems = [
   { key: 'domains', title: '优选域名', icon: 'mdi-earth' },
   { key: 'proxyip', title: 'ProxyIP', icon: 'mdi-swap-horizontal-bold' },
   { key: 'optimize', title: '优化工具', icon: 'mdi-tools' },
+  { key: 'autosync', title: '自动同步', icon: 'mdi-sync' },
 ]
 
 const pageMeta = {
@@ -136,6 +156,10 @@ const pageMeta = {
   optimize: {
     title: '优化工具',
     desc: '把优选结果应用到直连访问与客户端订阅，减少连接超时',
+  },
+  autosync: {
+    title: '自动同步',
+    desc: '定时测速优选 IP，并自动推送到 edgetunnel 面板的自定义订阅',
   },
 }
 
@@ -172,6 +196,149 @@ async function httpDelete(path) {
   const r = await fetch(path, { method: 'DELETE' })
   if (!r.ok) throw new Error(await r.text())
   return r.json()
+}
+
+// ---------------------------------------------------------------------------
+// 自动同步
+// ---------------------------------------------------------------------------
+
+// 面板地址只保留域名部分：用户常从浏览器复制到 /admin 的地址。
+function normalizePanelUrl(u) {
+  const s = String(u || '').trim().replace(/\/+$/, '')
+  return s.replace(/\/admin$/i, '')
+}
+
+function normalizeAutoSyncConfig(c) {
+  const cfg = c || {}
+  const filters = cfg.filters || {}
+  return {
+    enabled: !!cfg.enabled,
+    dailyTime: cfg.dailyTime || '03:00',
+    panelUrl: normalizePanelUrl(cfg.panelUrl || ''),
+    userAgent: cfg.userAgent || '',
+    filters: {
+      speedTopN: Number(filters.speedTopN) || 0,
+      maxDelay: Number(filters.maxDelay) || 0,
+      countries: Array.isArray(filters.countries) ? filters.countries : [],
+      minSpeed: Number(filters.minSpeed) || 0,
+    },
+  }
+}
+
+async function loadAutoSync() {
+  try {
+    const [cfg, st] = await Promise.all([
+      httpGet('/api/autosync/config'),
+      httpGet('/api/autosync/status'),
+    ])
+    autoSyncConfig.value = normalizeAutoSyncConfig(cfg)
+    autoSyncStatus.value = { ...autoSyncStatus.value, ...st, hasPassword: !!cfg.hasPassword }
+    // 回填已保存的面板密码，重启后不用重新输入。
+    if (cfg.hasPassword) {
+      try {
+        const sec = await httpPost('/api/autosync/reveal', {})
+        if (sec?.password) autoSyncPassword.value = sec.password
+      } catch (_) { /* 忽略 */ }
+    }
+  } catch (_) {
+    // 自动同步接口不可用时不影响其它页面
+  }
+}
+
+// 在测试连接/自动获取前，把界面上的密码静默保存到本地，
+// 避免用户忘记点「保存设置」导致重启后丢失。
+async function persistAutoSyncPassword() {
+  if (!autoSyncPassword.value) return
+  try {
+    await httpPost('/api/autosync/config', {
+      config: autoSyncConfig.value,
+      password: autoSyncPassword.value,
+    })
+  } catch (_) { /* 保存失败不阻断后续操作 */ }
+}
+
+async function saveAutoSync() {
+  autoSyncSaving.value = true
+  try {
+    const body = { config: autoSyncConfig.value, password: autoSyncPassword.value }
+    const r = await httpPost('/api/autosync/config', body)
+    autoSyncPassword.value = ''
+    if (r?.status) autoSyncStatus.value = { ...autoSyncStatus.value, ...r.status }
+    await loadAutoSync()
+    toast('自动同步设置已保存', 'success')
+  } catch (e) {
+    toast(String(e.message || e), 'error')
+  } finally {
+    autoSyncSaving.value = false
+  }
+}
+
+async function runAutoSyncNow() {
+  try {
+    await httpPost('/api/autosync/run', {
+      config: autoSyncConfig.value,
+      password: autoSyncPassword.value,
+    })
+    toast('已开始同步，测速进度可在「优选IP」页查看', 'info')
+  } catch (e) {
+    toast(String(e.message || e), 'error')
+  }
+}
+
+// 从 edgetunnel 面板读取 UUID / WS 路径并填入端到端凭据。
+async function fetchE2EFromPanel() {
+  e2eFetching.value = true
+  await persistAutoSyncPassword()
+  try {
+    const r = await httpPost('/api/e2e/credentials/from-panel', {
+      panelUrl: autoSyncConfig.value.panelUrl,
+      userAgent: autoSyncConfig.value.userAgent,
+      password: autoSyncPassword.value,
+    })
+    e2eSecrets.value = {
+      uuid: r.uuid || '',
+      password: r.password || '',
+      wsPath: r.wsPath || '',
+    }
+    if (r.protocol) config.value.e2eProtocol = r.protocol
+    if (r.host) config.value.e2eHost = r.host
+    if (r.port) config.value.e2ePort = Number(r.port) || 443
+    await loadE2ECredStatus()
+    toast(
+      `已从面板获取 ${(r.protocol || '').toUpperCase()} 凭据，WS 路径：${r.wsPath || '/'}`,
+      'success',
+    )
+  } catch (e) {
+    toast(String(e.message || e), 'error')
+  } finally {
+    e2eFetching.value = false
+  }
+}
+
+async function testAutoSyncPanel() {
+  autoSyncTesting.value = true
+  await persistAutoSyncPassword()
+  try {
+    const r = await httpPost('/api/autosync/test-panel', {
+      panelUrl: autoSyncConfig.value.panelUrl,
+      userAgent: autoSyncConfig.value.userAgent,
+      password: autoSyncPassword.value,
+    })
+    const warnings = r?.readiness?.warnings || []
+    if (warnings.length) {
+      toast(warnings.join('；'), 'warning')
+    } else {
+      toast('面板连接正常，优选订阅开关已就绪', 'success')
+    }
+    autoSyncStatus.value = {
+      ...autoSyncStatus.value,
+      lastWarn: warnings.join('；'),
+    }
+  } catch (e) {
+    toast(String(e.message || e), 'error')
+  } finally {
+    autoSyncTesting.value = false
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -262,7 +429,20 @@ async function loadConfig() {
 
 async function loadE2ECredStatus() {
   try {
-    e2eCredStatus.value = await httpGet('/api/e2e/credentials')
+    const s = await httpGet('/api/e2e/credentials')
+    e2eCredStatus.value = s
+    // 有已保存的凭据时，额外请求明文用于回填输入框，
+    // 避免每次重启都要重新输入。
+    if (s?.hasUuid || s?.hasPassword || s?.hasPath) {
+      const full = await httpPost('/api/e2e/credentials/reveal', {})
+      if (full) {
+        e2eSecrets.value = {
+          uuid: full.uuid || '',
+          password: full.password || '',
+          wsPath: full.wsPath || '',
+        }
+      }
+    }
   } catch (_) { /* 忽略 */ }
 }
 
@@ -803,6 +983,53 @@ function handleEvent(event, data) {
       }
       break
 
+    // ---- 自动同步 ----
+    case 'autosync:started':
+      autoSyncStatus.value = {
+        ...autoSyncStatus.value,
+        running: true,
+        lastStatus: 'running',
+        lastError: '',
+        lastWarn: '',
+      }
+      break
+    case 'autosync:panel':
+      if (data?.readiness?.warnings?.length) {
+        autoSyncStatus.value = {
+          ...autoSyncStatus.value,
+          lastWarn: data.readiness.warnings.join('；'),
+        }
+      }
+      break
+    case 'autosync:skipped':
+      autoSyncStatus.value = {
+        ...autoSyncStatus.value,
+        lastStatus: 'skipped',
+        lastWarn: data?.message || '',
+      }
+      toast(data?.message || '本次没有达标 IP，已跳过推送', 'warning')
+      break
+    case 'autosync:error':
+      autoSyncStatus.value = {
+        ...autoSyncStatus.value,
+        lastStatus: 'error',
+        lastError: data?.message || '',
+      }
+      toast(data?.message || '自动同步失败', 'error')
+      break
+    case 'autosync:finished':
+      autoSyncStatus.value = {
+        ...autoSyncStatus.value,
+        running: false,
+        lastStatus: data?.status || autoSyncStatus.value.lastStatus,
+        nextRun: data?.nextRun || autoSyncStatus.value.nextRun,
+        lastPushedCount: data?.pushed ?? autoSyncStatus.value.lastPushedCount,
+      }
+      if (data?.status === 'success') {
+        toast(`自动同步完成，已推送 ${data.pushed} 个 IP`, 'success')
+      }
+      break
+
     // ---- 稳定性测试 ----
     case 'stability:start':
       stabilityRunning.value = true
@@ -989,6 +1216,7 @@ onMounted(async () => {
   await restoreProxyIPState()
   await restoreFetchStatus()
   await restoreDomainState()
+  await loadAutoSync()
   try {
     const v = await httpGet('/api/version')
     if (v?.version) version.value = v.version
@@ -1185,7 +1413,9 @@ onBeforeUnmount(() => {
           :pool-count="poolCount"
           :running="running"
           :fetch-status="fetchStatus"
+          :fetching-e2e="e2eFetching"
           @pick-ip-file="pickIpFile"
+          @fetch-e2e-from-panel="fetchE2EFromPanel"
           @open-bestcf="openBestCF"
           @open-cmliu="openCmliu"
           @open-cfdomains="openCFDomains"
@@ -1233,6 +1463,18 @@ onBeforeUnmount(() => {
           v-else-if="currentPage === 'optimize'"
           :results="results"
           @toast="(text, color) => toast(text, color)"
+        />
+
+        <AutoSyncPanel
+          v-else-if="currentPage === 'autosync'"
+          v-model:config="autoSyncConfig"
+          v-model:password="autoSyncPassword"
+          :status="autoSyncStatus"
+          :saving="autoSyncSaving"
+          :testing="autoSyncTesting"
+          @save="saveAutoSync"
+          @run-now="runAutoSyncNow"
+          @test-panel="testAutoSyncPanel"
         />
       </div>
     </v-main>
